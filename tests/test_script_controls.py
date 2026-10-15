@@ -552,3 +552,17 @@ def test_dictionary_must_be_utf8(tmp_path):
 
     with pytest.raises(InputFileError, match="not valid UTF-8"):
         load_pronunciations(path)
+
+
+def test_inline_comments_are_ignored(tmp_path):
+    body = (
+        "nginx/i = engine x        # /i: match any capitalization\n"
+        "Kokoro = /kˈOkəɹO/        # slashes: exact phonemes\n"
+        "C# = C sharp\n"
+        "   # an indented comment line\n"
+    )
+    rules = load_pronunciations(write_dictionary(tmp_path, body))
+
+    assert to_spoken("NGINX, Kokoro and C#.", rules).text == (
+        "engine x, [Kokoro](/kˈOkəɹO/) and C sharp."
+    )

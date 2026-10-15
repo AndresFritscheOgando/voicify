@@ -1,11 +1,14 @@
 """Pronunciation dictionary: per-project fixes for words the engine says wrong.
 
-File format (UTF-8, one entry per line, `#` starts a comment line):
+File format (UTF-8, one entry per line; `#` starts a comment, at the start of a line or after
+a space):
 
-    Kokoro = Koh-koh-roh          respell it
+    Kokoro = Koh-koh-roh          # respell it
     SQL = sequel
-    nginx/i = engine x            `/i` after the word: match any capitalization
-    Kokoro = /kˈOkəɹO/            slashes: exact phonemes (misaki's [word](/phonemes/) syntax)
+    nginx/i = engine x            # /i after the word: match any capitalization
+    Kokoro = /kˈOkəɹO/            # slashes: exact phonemes (misaki's [word](/phonemes/) syntax)
+
+A `#` with no space before it is part of the text, so `C# = C sharp` works.
 
 Matching is whole-word and case-sensitive unless `/i` is given. Replacements change only what
 the engine reads; subtitles keep the original spelling.
@@ -23,6 +26,7 @@ from tts_agent.processing.spoken import Rule
 logger = logging.getLogger(__name__)
 
 _IGNORE_CASE_FLAG = "/i"
+_COMMENT = re.compile(r"(?:^|\s)#.*$")
 
 
 def load_pronunciations(path: str | Path) -> list[Rule]:
@@ -39,8 +43,8 @@ def load_pronunciations(path: str | Path) -> list[Rule]:
 
     entries: dict[tuple[str, bool], str] = {}
     for number, raw in enumerate(lines, start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        line = _COMMENT.sub("", raw).strip()
+        if not line:
             continue
         if "=" not in line:
             raise InputFileError(f"{path}:{number}: expected 'word = pronunciation', got {raw!r}")

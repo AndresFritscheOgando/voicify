@@ -24,6 +24,9 @@ uv sync
 uv run voicify --text "Hello, welcome to my channel." --output outputs/hello.wav
 ```
 
+**New here?** Follow the [step-by-step guide](docs/usage-guide.md), which goes from installing to
+a finished voice-over with subtitles.
+
 ---
 
 ## 1. Project overview
