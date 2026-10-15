@@ -1,0 +1,31 @@
+Ever wondered how a website knows you're logged in, even after you refresh the page?
+
+One common way is through something called a JWT, or JSON Web Token.
+
+Imagine logging into your favorite app.
+
+You enter your email and password. The server checks your credentials, and if they're correct, it creates a signed JWT.
+
+Think of it like a digital pass that proves the server recognized you.
+
+A typical signed JWT has three parts.
+
+The header describes the token and its signing algorithm.
+
+The payload contains information called claims, such as your user ID and expiration time.
+
+And the signature helps the server detect whether the token has been changed.
+
+Here's the interesting part.
+
+When your app makes another request, it can send that JWT along with it.
+
+The server verifies the signature, checks things like expiration, and decides whether to allow the request.
+
+No need to send your password every time!
+
+But there's one important catch.
+
+A signed JWT is not automatically encrypted. Its payload can usually be decoded, so never put passwords or secrets inside it.
+
+And that's JWT: a compact way to carry verifiable information between systems.

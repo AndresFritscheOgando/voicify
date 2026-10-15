@@ -1,0 +1,3 @@
+interface:
+  display_name: "Voicify Voice-over"
+  short_description: "Create local voice-overs in MP3 and WAV"
