@@ -27,8 +27,8 @@ uv sync
 uv run voicify --text "Hello, welcome to my channel." --output outputs/hello.wav
 ```
 
-**New here?** Follow the [step-by-step guide](docs/usage-guide.md), which goes from installing to
-a finished voice-over with subtitles.
+**New here?** Start with [Local installation](#3-local-installation), then the
+[CLI examples](#6-cli-examples), which go from a first clip to a finished voice-over with subtitles.
 
 ---
 
@@ -49,7 +49,6 @@ text or .txt script
 | `src/tts_agent/cli.py` | The argparse command-line interface |
 | `src/tts_agent/engines/` | The `TTSEngine` interface, the Kokoro and Chatterbox (voice cloning) engines, and a mock engine for tests |
 | `src/tts_agent/processing/` | Text chunking, audio/MP3 writing, subtitles, pronunciations, normalization |
-| `docs/` | Requirements, design decisions, engine evaluation, environment, and the build log ([phases.md](docs/phases.md)) |
 
 ## 2. Prerequisites
 
@@ -539,9 +538,6 @@ uv run pytest -m model        # 11 real-model integration tests (Kokoro, plus Ch
 uv run pytest -m "model or not model" --cov=tts_agent   # everything, with coverage (98%)
 uv run ruff check . && uv run ruff format --check src tests
 ```
-
-The build log, measurements, and the reasoning behind each decision are in [`docs/`](docs/), starting
-with [phases.md](docs/phases.md) and [decisions.md](docs/decisions.md).
 
 ## License and credits
 

@@ -160,7 +160,7 @@ def test_bad_input_file_raises(agent, tmp_path):
 
 
 def test_spec_api_example_runs_unchanged(mock_engine, tmp_path, monkeypatch):
-    """The Python API example from docs/phases.md, with the engine injected."""
+    """The Python API example from the README, with the engine injected."""
     monkeypatch.chdir(tmp_path)
     agent = TTSAgent(engine=mock_engine, settings=Settings())
     result = agent.generate(

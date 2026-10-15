@@ -1,6 +1,6 @@
 """Number and abbreviation fixes for what Kokoro's G2P (misaki) reads wrong.
 
-Each rule exists because misaki got the case wrong when probed in Phase 8 (see docs/phases.md).
+Each rule exists because misaki got the case wrong when probed in Phase 8.
 Years, ordinals, currency, percentages, decimals, Dr./Mr./Mrs./Ms., "St." before a name, and
 common acronyms are already read correctly and are left alone. Turn this off with
 TTS_NORMALIZE=false.
