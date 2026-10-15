@@ -69,6 +69,7 @@ class TTSEngine(ABC):
     sample_rate: int
     def list_voices(self) -> list[VoiceInfo]: ...
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray: ...  # float32 mono
+    def prepare(self, voice: str) -> None: ...  # optional: load the model before timing starts
 
 @dataclass(frozen=True)
 class VoiceInfo:
@@ -98,6 +99,7 @@ class GenerationResult:
     subtitle_path: Path | None
     format: str
     timeline: list[ChunkTiming]   # successful chunks only; feeds the SRT in Phase 7
+    load_seconds: float           # model loading, kept out of generation_seconds
 ```
 
 ## Error hierarchy

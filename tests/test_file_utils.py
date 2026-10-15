@@ -2,8 +2,68 @@ from __future__ import annotations
 
 import pytest
 
-from tts_agent.errors import OutputError
-from tts_agent.utils.file_utils import resolve_output_path
+from tts_agent.errors import EmptyTextError, InputFileError, OutputError
+from tts_agent.utils.file_utils import read_text_file, resolve_output_path
+
+# --- read_text_file --------------------------------------------------------------------------
+
+
+def test_reads_utf8_text(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_text("Café — “quoted”", encoding="utf-8")
+
+    assert read_text_file(path) == "Café — “quoted”"
+
+
+def test_strips_byte_order_mark(tmp_path):
+    path = tmp_path / "a.txt"
+    path.write_bytes("﻿Hello.".encode())
+
+    assert read_text_file(str(path)) == "Hello."
+
+
+def test_extension_check_is_case_insensitive(tmp_path):
+    path = tmp_path / "A.TXT"
+    path.write_text("Hello.", encoding="utf-8")
+
+    assert read_text_file(path) == "Hello."
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "message"),
+    [
+        ("missing.txt", None, "not found"),
+        ("script.md", b"Hello.", "must be a .txt file"),
+        ("script", b"Hello.", "must be a .txt file"),
+        ("latin1.txt", "Café".encode("latin-1"), "not valid UTF-8"),
+    ],
+)
+def test_bad_input_files(tmp_path, name, content, message):
+    path = tmp_path / name
+    if content is not None:
+        path.write_bytes(content)
+
+    with pytest.raises(InputFileError, match=message):
+        read_text_file(path)
+
+
+def test_directory_is_not_a_file(tmp_path):
+    (tmp_path / "dir.txt").mkdir()
+
+    with pytest.raises(InputFileError, match="not a file"):
+        read_text_file(tmp_path / "dir.txt")
+
+
+@pytest.mark.parametrize("content", ["", "   \n\n\t"])
+def test_empty_file_raises_empty_text_error(tmp_path, content):
+    path = tmp_path / "empty.txt"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(EmptyTextError, match="empty"):
+        read_text_file(path)
+
+
+# --- resolve_output_path ---------------------------------------------------------------------
 
 
 def test_new_path_is_returned_unchanged(tmp_path):

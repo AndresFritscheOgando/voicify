@@ -25,17 +25,19 @@ from tts_agent.errors import (
     UnsupportedVoiceError,
 )
 from tts_agent.processing.audio_processor import (
+    OUTPUT_FORMATS,
     concatenate,
     duration_seconds,
     silence,
     write_wav,
 )
 from tts_agent.processing.text_processor import Chunk, chunk_text
-from tts_agent.utils.file_utils import resolve_output_path
+from tts_agent.utils.file_utils import read_text_file, resolve_output_path
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FILENAME = "narration"
+DEFAULT_FORMAT = "wav"
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class GenerationResult:
     subtitle_path: Path | None = None
     format: str = "wav"
     timeline: list[ChunkTiming] = field(default_factory=list)
+    load_seconds: float = 0.0  # engine/model loading before synthesis; 0 once loaded
 
 
 class TTSAgent:
@@ -81,28 +84,33 @@ class TTSAgent:
 
     def generate(
         self,
-        text: str,
+        text: str | None = None,
+        *,
+        file: str | Path | None = None,
         voice: str | None = DEFAULT_VOICE_ALIAS,
-        output_path: str | Path | None = None,
         speed: float | None = None,
+        output_path: str | Path | None = None,
+        format: str | None = None,
         overwrite: bool = False,
         on_chunk_error: str | None = None,
     ) -> GenerationResult:
-        """Synthesize `text` and write it as a WAV file.
+        """Synthesize `text` (or the UTF-8 `.txt` script at `file`) and write an audio file.
 
-        The text is split into sentence-aligned chunks that are synthesized in order with the same
-        voice and speed, joined with short pauses (longer at paragraph breaks).
+        Exactly one of `text` and `file` must be given. The text is split into sentence-aligned
+        chunks that are synthesized in order with the same voice and speed, joined with short
+        pauses (longer at paragraph breaks).
 
         `voice="default"` (or None) uses `TTS_DEFAULT_VOICE`; `speed=None` uses
         `TTS_DEFAULT_SPEED` and must be within 0.5-2.0. `output_path` defaults to
-        `<output_dir>/narration.wav`. An existing file gets a numeric suffix unless `overwrite`.
+        `<output_dir>/narration.<format>`. `format` defaults to the extension of `output_path`,
+        or `"wav"`; when both are given they must agree. An existing file gets a numeric suffix
+        unless `overwrite`.
 
         A chunk that still fails after `TTS_CHUNK_RETRIES` retries is skipped and listed in
         `failed_chunks` (`on_chunk_error="skip"`), or stops the run (`"abort"`). If every chunk
         fails, `SynthesisError` is raised and no file is written.
         """
-        if text is None or not text.strip():
-            raise EmptyTextError("Text is empty; nothing to synthesize")
+        text = self._read_input(text, file)
         voice = self.resolve_voice(voice)
         speed = validate_speed(self.settings.default_speed if speed is None else speed)
         policy = (on_chunk_error or self.settings.on_chunk_error).strip().lower()
@@ -110,7 +118,7 @@ class TTSAgent:
             raise InvalidOptionError(
                 f"on_chunk_error must be one of {', '.join(CHUNK_ERROR_POLICIES)}, got {policy!r}"
             )
-        target = self._target_path(output_path)
+        target, output_format = self._target_path(output_path, format)
         chunks = chunk_text(text, self.settings.max_chunk_chars)
 
         logger.info(
@@ -121,6 +129,10 @@ class TTSAgent:
             len(text),
             len(chunks),
         )
+        loading = time.perf_counter()
+        self.engine.prepare(voice)  # one-time model load, kept out of generation_seconds
+        load_seconds = time.perf_counter() - loading
+
         started = time.perf_counter()
         audio, timeline, failed = self._synthesize_chunks(chunks, voice, speed, policy)
         generation_seconds = time.perf_counter() - started
@@ -145,8 +157,20 @@ class TTSAgent:
             generation_seconds=generation_seconds,
             chunk_count=len(chunks),
             failed_chunks=failed,
+            format=output_format,
             timeline=timeline,
+            load_seconds=load_seconds,
         )
+
+    @staticmethod
+    def _read_input(text: str | None, file: str | Path | None) -> str:
+        if text is not None and file is not None:
+            raise InvalidOptionError("Pass either text or file, not both")
+        if file is not None:
+            return read_text_file(file)
+        if text is None or not text.strip():
+            raise EmptyTextError("Text is empty; nothing to synthesize")
+        return text
 
     def resolve_voice(self, voice: str | None = DEFAULT_VOICE_ALIAS) -> str:
         """Map `"default"`/None to the configured default and check the id against the catalog."""
@@ -164,7 +188,7 @@ class TTSAgent:
         suggestions = difflib.get_close_matches(requested, known, n=3, cutoff=0.6)
         if suggestions:
             message += f". Did you mean: {', '.join(suggestions)}?"
-        message += " Call list_voices() to see all voices."
+        message += " Run --list-voices (or call list_voices()) to see all voices."
         raise UnsupportedVoiceError(message)
 
     def _synthesize_chunks(
@@ -240,14 +264,28 @@ class TTSAgent:
                 )
         return None
 
-    def _target_path(self, output_path: str | Path | None) -> Path:
+    def _target_path(self, output_path: str | Path | None, format: str | None) -> tuple[Path, str]:
+        """Resolve the output path and format, checking that they agree."""
+        supported = ", ".join(OUTPUT_FORMATS)
+        requested = format.strip().lower().lstrip(".") if format else None
+        if requested is not None and requested not in OUTPUT_FORMATS:
+            raise InvalidOptionError(f"Unsupported format {format!r}; supported: {supported}")
+
         if output_path is None:
-            return self.settings.output_dir / f"{DEFAULT_FILENAME}.wav"
+            fmt = requested or DEFAULT_FORMAT
+            return self.settings.output_dir / f"{DEFAULT_FILENAME}.{fmt}", fmt
         path = Path(output_path)
-        if path.suffix == "":
-            return path.with_suffix(".wav")
-        if path.suffix.lower() != ".wav":
+        extension = path.suffix.lower().lstrip(".")
+        if not extension:
+            fmt = requested or DEFAULT_FORMAT
+            return path.with_name(f"{path.name}.{fmt}"), fmt
+        if extension not in OUTPUT_FORMATS:
             raise InvalidOptionError(
-                f"Unsupported output extension {path.suffix!r}; only .wav is supported"
+                f"Unsupported output extension {path.suffix!r}; supported: {supported}"
             )
-        return path
+        if requested is not None and requested != extension:
+            raise InvalidOptionError(
+                f"Output path {path.name!r} does not match format {requested!r}; "
+                f"use a .{requested} file name or drop the format"
+            )
+        return path, extension

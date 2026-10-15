@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from tts_agent.errors import InvalidOptionError
 
@@ -69,7 +69,9 @@ class Settings:
         into `os.environ` so that Hugging Face variables such as `HF_HUB_OFFLINE` take effect too.
         """
         if environ is None:
-            load_dotenv(override=False)
+            # Search from the working directory: the default searches from this file's folder,
+            # which would miss the user's .env once the package is installed.
+            load_dotenv(find_dotenv(usecwd=True), override=False)
             environ = os.environ
 
         def get(name: str) -> str | None:

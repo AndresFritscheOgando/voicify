@@ -21,7 +21,7 @@ Related context:
 | 3 | Basic speech generation (MVP) | Done (listening check passed 2026-10-15) |
 | 4 | Multiple voices | Done (listening check passed 2026-10-15) |
 | 5 | Long-form narration | Done (listening spot-check passed 2026-10-15) |
-| 6 | CLI and Python API | Not started |
+| 6 | CLI and Python API | Done (2026-10-15) |
 | 7 | Output extras: MP3 + SRT | Not started |
 | 8 | Script controls | Not started |
 | 9 | Testing hardening and documentation | Not started |
@@ -336,9 +336,45 @@ result.failed_chunks, result.subtitle_path  # (Phase 7)
 
 **Acceptance criteria**
 
-- [ ] All three example commands from the spec work as written.
-- [ ] CLI tests (calling `main(argv)` with a mock engine) cover each validation error.
-- [ ] The API example from the spec runs unchanged.
+- [x] All three example commands from the spec work as written.
+- [x] CLI tests (calling `main(argv)` with a mock engine) cover each validation error.
+- [x] The API example from the spec runs unchanged.
+
+**Phase 6 notes (2026-10-15)**
+
+- **The spec's three example commands are not in the repo.** These three were run on real Kokoro
+  (offline, CUDA), through both entry points, and all exited 0:
+  `python main.py --text "Hello, welcome to my channel." --output outputs/phase6/hello.wav`,
+  `voicify --file scripts/example.txt --voice am_michael --speed 0.9 --output outputs/phase6/example.wav`,
+  and `voicify --list-voices`. The user accepted these three in place of the spec's exact
+  commands and marked the criterion done (2026-10-15).
+- The API example above ran unchanged against real Kokoro. A copy of it, using the mock engine, is
+  in `test_agent.py`.
+- **Options deferred to their phases:** `--no-srt` and `--keep-wav` (Phase 7) and `--pronunciations`
+  (Phase 8). `--format` accepts only `wav` until Phase 7 adds `mp3` to `OUTPUT_FORMATS`.
+- **API:** `generate(text=None, *, file=None, voice="default", speed=None, output_path=None,
+  format=None, overwrite=False, on_chunk_error=None)`. Everything after `text` is keyword-only.
+  `format` defaults to the `output_path` extension, then `wav`. A file name without an extension gets
+  `.<format>` appended (so `episode.v2` would become `episode.v2.wav`).
+- **Input files** (`read_text_file`): a missing file, a directory, a non-`.txt` name, an unreadable
+  file, or invalid UTF-8 raises `InputFileError`. A whitespace-only file raises `EmptyTextError`.
+  A UTF-8 byte-order mark is accepted.
+- **CLI:**
+  - Errors print as one `error: ...` line, plus a traceback with `--verbose`.
+  - Exit codes are 0, 1, 2, and 3 as planned, plus 130 for Ctrl+C.
+  - Usage errors (exit 2) are: argparse errors, `EmptyTextError`, `InputFileError`,
+    `InvalidOptionError`, and `UnsupportedVoiceError`.
+  - `--quiet` keeps warnings, so skipped chunks are still reported.
+  - stdout/stderr are switched to UTF-8 for the Windows console.
+  - `--list-voices` marks the configured default with `*`.
+- **Load time is reported separately.** The new optional `TTSEngine.prepare(voice)` hook loads the
+  model before the timer starts. `GenerationResult.load_seconds` holds that time, and
+  `generation_seconds` is now synthesis only. On CUDA, a CLI run prints
+  `Generated: 0.7 s (1 chunk, plus 11.8 s loading)`. The 11.8 s is mostly the one-time import of
+  kokoro, misaki, and spaCy.
+- **Fixed:** `.env` was searched for from `config.py`'s own folder rather than the working directory,
+  so an installed package would never have found it. It now uses `find_dotenv(usecwd=True)`.
+- Tests: 202 mock tests in about 3 s, including 42 CLI tests. The `pytest -m model` tests pass offline.
 
 ---
 

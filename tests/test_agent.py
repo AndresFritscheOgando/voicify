@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import soundfile as sf
 
 from tts_agent import (
     EmptyTextError,
+    InputFileError,
     InvalidOptionError,
     ModelLoadError,
     Settings,
@@ -97,6 +100,94 @@ def test_output_path_without_extension_gets_wav(agent, tmp_path):
 def test_unsupported_output_extension(agent, tmp_path):
     with pytest.raises(InvalidOptionError):
         agent.generate(EXAMPLE, output_path=tmp_path / "clip.mp3")
+
+
+def test_output_name_with_dots_keeps_them(agent, tmp_path):
+    result = agent.generate(EXAMPLE, output_path=tmp_path / "episode.v2.wav")
+
+    assert result.output_path == tmp_path / "episode.v2.wav"
+
+
+@pytest.mark.parametrize("fmt", ["wav", "WAV", ".wav"])
+def test_format_is_normalized(agent, tmp_path, fmt):
+    result = agent.generate(EXAMPLE, output_path=tmp_path / "a", format=fmt)
+
+    assert result.output_path == tmp_path / "a.wav"
+    assert result.format == "wav"
+
+
+def test_format_sets_default_file_name(agent, settings):
+    result = agent.generate(EXAMPLE, format="wav")
+
+    assert result.output_path == settings.output_dir / "narration.wav"
+
+
+def test_format_must_be_supported(agent):
+    with pytest.raises(InvalidOptionError, match="Unsupported format 'flac'"):
+        agent.generate(EXAMPLE, format="flac")
+
+
+def test_format_must_match_output_extension(agent, tmp_path, monkeypatch):
+    import tts_agent.agent as agent_module
+
+    # Pretend a second format exists, so a mismatch is possible before Phase 7 adds MP3.
+    monkeypatch.setattr(agent_module, "OUTPUT_FORMATS", ("wav", "mp3"))
+    with pytest.raises(InvalidOptionError, match="does not match format 'mp3'"):
+        agent.generate(EXAMPLE, output_path=tmp_path / "a.wav", format="mp3")
+
+
+def test_generate_from_file(agent, mock_engine, tmp_path):
+    script = tmp_path / "script.txt"
+    script.write_text("﻿First paragraph.\n\nSecond paragraph.", encoding="utf-8")
+
+    result = agent.generate(file=script, output_path=tmp_path / "a.wav")
+
+    assert [c[0] for c in mock_engine.calls] == ["First paragraph.", "Second paragraph."]
+    assert result.chunk_count == 2
+
+
+def test_text_and_file_are_exclusive(agent, tmp_path):
+    with pytest.raises(InvalidOptionError, match="not both"):
+        agent.generate("Hi.", file=tmp_path / "a.txt")
+
+
+def test_missing_text_and_file(agent):
+    with pytest.raises(EmptyTextError):
+        agent.generate()
+
+
+def test_bad_input_file_raises(agent, tmp_path):
+    with pytest.raises(InputFileError):
+        agent.generate(file=tmp_path / "missing.txt")
+
+
+def test_spec_api_example_runs_unchanged(mock_engine, tmp_path, monkeypatch):
+    """The Python API example from docs/phases.md, with the engine injected."""
+    monkeypatch.chdir(tmp_path)
+    agent = TTSAgent(engine=mock_engine, settings=Settings())
+    result = agent.generate(
+        text="Hello, welcome to my channel.",
+        voice="default",
+        speed=1.0,
+        output_path="outputs/hello.wav",
+        format="wav",
+        overwrite=False,
+    )
+    _fields = (  # every attribute the spec example reads must exist
+        result.output_path,
+        result.duration_seconds,
+        result.sample_rate,
+        result.voice,
+        result.generation_seconds,
+        result.chunk_count,
+        result.failed_chunks,
+        result.subtitle_path,
+    )
+
+    assert result.output_path == Path("outputs/hello.wav")
+    assert (tmp_path / "outputs" / "hello.wav").exists()
+    assert result.voice == "af_heart"
+    assert result.subtitle_path is None
 
 
 def test_engine_returning_no_audio_raises(settings, tmp_path):
@@ -385,3 +476,39 @@ def test_long_form_500_sentences(tmp_path):
     assert result.failed_chunks == []
     assert all(len(call[0]) <= 400 for call in engine.calls)
     assert all(a.end < b.start for a, b in zip(result.timeline, result.timeline[1:], strict=False))
+
+
+def test_engine_is_prepared_before_synthesis_and_load_time_is_separate(settings, tmp_path):
+    events = []
+
+    class SlowLoadingEngine(MockEngine):
+        def prepare(self, voice):
+            events.append(("prepare", voice))
+            import time
+
+            time.sleep(0.05)
+
+        def synthesize(self, text, voice, speed=1.0):
+            events.append(("synthesize", voice))
+            return super().synthesize(text, voice, speed)
+
+    result = TTSAgent(engine=SlowLoadingEngine(), settings=settings).generate(
+        EXAMPLE, output_path=tmp_path / "a.wav"
+    )
+
+    assert events[0] == ("prepare", "af_heart")
+    assert events[1][0] == "synthesize"
+    assert result.load_seconds >= 0.05
+    assert result.generation_seconds < result.load_seconds
+
+
+def test_model_load_error_from_prepare_stops_before_synthesis(settings, tmp_path):
+    class UnloadableEngine(MockEngine):
+        def prepare(self, voice):
+            raise ModelLoadError("no CUDA")
+
+    engine = UnloadableEngine()
+    with pytest.raises(ModelLoadError):
+        TTSAgent(engine=engine, settings=settings).generate(EXAMPLE, output_path=tmp_path / "a.wav")
+    assert engine.calls == []
+    assert not (tmp_path / "a.wav").exists()

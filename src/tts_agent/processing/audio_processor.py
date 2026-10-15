@@ -9,6 +9,9 @@ import soundfile as sf
 
 from tts_agent.errors import OutputError
 
+# Output formats the agent can write. MP3 is added in Phase 7.
+OUTPUT_FORMATS = ("wav",)
+
 
 def duration_seconds(audio: np.ndarray, sample_rate: int) -> float:
     return len(audio) / sample_rate

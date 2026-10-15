@@ -110,6 +110,10 @@ class KokoroEngine(TTSEngine):
     def list_voices(self) -> list[VoiceInfo]:
         return list(VOICES)
 
+    def prepare(self, voice: str) -> None:
+        """Import Kokoro, load the model, and build the pipeline for `voice`'s language."""
+        self._pipeline_for(voice)
+
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray:
         pipeline = self._pipeline_for(voice)
         try:

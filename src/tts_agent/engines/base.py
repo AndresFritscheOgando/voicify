@@ -39,3 +39,6 @@ class TTSEngine(ABC):
 
     @abstractmethod
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray: ...
+
+    def prepare(self, voice: str) -> None:  # noqa: B027 - optional hook, a no-op by default
+        """Load whatever `voice` needs before the first `synthesize` call. Optional."""
