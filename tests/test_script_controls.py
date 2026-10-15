@@ -532,3 +532,23 @@ def test_misaki_reads_the_normalized_text_better(text, phonemes_before, phonemes
     after = phonemes(normalize(text))
     assert phonemes_after in after
     assert phonemes_before not in after
+
+
+def test_map_words_skips_blank_and_unknown_tokens():
+    spoken = to_spoken("Call 555-1234 now.", NORMALIZATION_RULES)
+    words = [
+        WordTiming(" ", 0.0, 0.0),
+        WordTiming("Call", 0.0, 0.3),
+        WordTiming("zzz", 0.3, 0.4),
+        WordTiming("now", 1.5, 1.8),
+    ]
+
+    assert [w.text for w in map_words(words, spoken)] == ["Call", "now"]
+
+
+def test_dictionary_must_be_utf8(tmp_path):
+    path = tmp_path / "words.txt"
+    path.write_bytes("Café = cafe".encode("latin-1"))
+
+    with pytest.raises(InputFileError, match="not valid UTF-8"):
+        load_pronunciations(path)

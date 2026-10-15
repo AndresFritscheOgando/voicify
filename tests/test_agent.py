@@ -510,3 +510,15 @@ def test_model_load_error_from_prepare_stops_before_synthesis(settings, tmp_path
         TTSAgent(engine=engine, settings=settings).generate(EXAMPLE, output_path=tmp_path / "a.wav")
     assert engine.calls == []
     assert not (tmp_path / "a.wav").exists()
+
+
+def test_default_engine_is_kokoro_on_the_configured_device(settings):
+    from dataclasses import replace
+
+    from tts_agent.engines.kokoro_engine import KokoroEngine
+
+    agent = TTSAgent(settings=replace(settings, device="cpu"))
+
+    assert isinstance(agent.engine, KokoroEngine)
+    assert agent.engine._requested_device == "cpu"
+    assert agent.engine.device is None  # nothing loads until the first generate()

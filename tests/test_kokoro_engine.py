@@ -153,3 +153,82 @@ def test_real_kokoro_word_timings_line_up_with_the_text():
     cursor = 0
     for w in words:  # every token is found in order in the input text
         cursor = text.index(w.text, cursor)
+
+
+# --- model files: cache first, download only when missing ------------------------------------
+
+
+def test_model_file_uses_the_cache_without_downloading(monkeypatch):
+    import huggingface_hub
+
+    from tts_agent.engines import kokoro_engine
+
+    monkeypatch.setattr(
+        huggingface_hub, "try_to_load_from_cache", lambda repo, name: f"/cache/{repo}/{name}"
+    )
+
+    def no_download(*args, **kwargs):
+        raise AssertionError("must not download a cached file")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", no_download)
+
+    assert kokoro_engine.model_file("config.json") == "/cache/hexgrad/Kokoro-82M/config.json"
+
+
+def test_model_file_downloads_when_missing(monkeypatch):
+    import huggingface_hub
+
+    from tts_agent.engines import kokoro_engine
+
+    downloads = []
+    monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", lambda repo, name: None)
+    monkeypatch.setattr(
+        huggingface_hub,
+        "hf_hub_download",
+        lambda repo, name: downloads.append(name) or f"/downloaded/{name}",
+    )
+
+    assert kokoro_engine.model_file("voices/af_heart.pt") == "/downloaded/voices/af_heart.pt"
+    assert downloads == ["voices/af_heart.pt"]
+
+
+def test_voice_that_cannot_be_loaded_is_a_synthesis_error(monkeypatch):
+    from tts_agent.engines import kokoro_engine
+
+    class FakePipeline:
+        voices: dict = {}
+
+    engine = KokoroEngine()
+    monkeypatch.setattr(engine, "_pipeline_for", lambda voice: FakePipeline())
+
+    def offline(name):
+        raise OSError("offline and not cached")
+
+    monkeypatch.setattr(kokoro_engine, "model_file", offline)
+
+    with pytest.raises(SynthesisError, match="Could not load Kokoro voice 'af_sky'"):
+        engine.prepare("af_sky")
+
+
+@pytest.mark.model
+def test_real_kokoro_needs_no_network_once_cached(monkeypatch, tmp_path):
+    """Definition of Done: no network access after the first download, even without
+    HF_HUB_OFFLINE. Every socket connection attempt fails the test."""
+    import socket
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    attempts = []
+
+    def refuse(self, address, *args, **kwargs):
+        attempts.append(address)
+        raise OSError("network blocked by test")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    from tts_agent import Settings, TTSAgent
+
+    result = TTSAgent(settings=Settings(output_dir=tmp_path)).generate(
+        "Offline check.", voice="bf_emma", format="mp3"
+    )
+
+    assert result.output_path.exists()
+    assert attempts == []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -111,8 +112,8 @@ class KokoroEngine(TTSEngine):
         return list(VOICES)
 
     def prepare(self, voice: str) -> None:
-        """Import Kokoro, load the model, and build the pipeline for `voice`'s language."""
-        self._pipeline_for(voice)
+        """Import Kokoro, load the model and `voice`, and build the pipeline for its language."""
+        self._voice_ready(voice)
 
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray:
         return self.synthesize_timed(text, voice, speed)[0]
@@ -121,7 +122,7 @@ class KokoroEngine(TTSEngine):
         self, text: str, voice: str, speed: float = 1.0
     ) -> tuple[np.ndarray, list[WordTiming]]:
         """Synthesize and collect misaki's token timestamps (derived from predicted durations)."""
-        pipeline = self._pipeline_for(voice)
+        pipeline = self._voice_ready(voice)
         segments: list[np.ndarray] = []
         words: list[WordTiming] = []
         offset = 0.0  # Kokoro may yield several segments; their timestamps restart at zero
@@ -142,6 +143,21 @@ class KokoroEngine(TTSEngine):
         if not segments:
             raise SynthesisError("Kokoro produced no audio for the given text")
         return np.concatenate(segments).astype(np.float32, copy=False), words
+
+    def _voice_ready(self, voice: str) -> KPipeline:
+        """The pipeline for `voice`, with the voice loaded from the local cache when present."""
+        pipeline = self._pipeline_for(voice)
+        if voice not in pipeline.voices:
+            import torch
+
+            try:
+                path = model_file(f"voices/{voice}.pt")
+                pipeline.voices[voice] = torch.load(path, weights_only=True)
+            except Exception as exc:
+                raise SynthesisError(
+                    f"Could not load Kokoro voice {voice!r}: {exc}{_offline_hint()}"
+                ) from exc
+        return pipeline
 
     def _pipeline_for(self, voice: str) -> KPipeline:
         lang_code = _LANG_CODES.get(voice[:1])
@@ -167,9 +183,16 @@ class KokoroEngine(TTSEngine):
         try:
             from kokoro import KModel
 
-            model = KModel(repo_id=REPO_ID).to(device).eval()
+            model = KModel(
+                repo_id=REPO_ID,
+                config=model_file("config.json"),
+                model=model_file(KModel.MODEL_NAMES[REPO_ID]),
+            )
+            model = model.to(device).eval()
         except Exception as exc:
-            raise ModelLoadError(f"Failed to load the Kokoro model on {device}: {exc}") from exc
+            raise ModelLoadError(
+                f"Failed to load the Kokoro model on {device}: {exc}{_offline_hint()}"
+            ) from exc
         self._model = model
         self._device = device
         logger.info(
@@ -194,6 +217,32 @@ class KokoroEngine(TTSEngine):
             logger.warning("cuda_unavailable fallback=cpu")
             return "cpu"
         return "cuda" if self._requested_device == "auto" else "cpu"
+
+
+def model_file(filename: str) -> str:
+    """Path to a file of the Kokoro repo: from the local Hugging Face cache when it is there,
+    otherwise downloaded once.
+
+    Kokoro would otherwise call `hf_hub_download` every time, which asks huggingface.co whether
+    the file changed (three requests per run) unless HF_HUB_OFFLINE=1 is set. Resolving cached
+    files ourselves means no network access at all once everything has been downloaded.
+    """
+    from huggingface_hub import hf_hub_download, try_to_load_from_cache
+
+    cached = try_to_load_from_cache(REPO_ID, filename)
+    if isinstance(cached, str):
+        return cached
+    logger.info("model_download repo=%s file=%s", REPO_ID, filename)
+    return hf_hub_download(REPO_ID, filename)
+
+
+def _offline_hint() -> str:
+    if os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return (
+            " (HF_HUB_OFFLINE is set but this file is not cached yet: unset HF_HUB_OFFLINE and"
+            " run once with a network connection to download it)"
+        )
+    return ""
 
 
 def _to_numpy(audio: Any) -> np.ndarray:

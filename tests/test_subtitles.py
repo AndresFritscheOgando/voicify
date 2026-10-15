@@ -247,3 +247,34 @@ def test_very_short_cues_are_stretched_when_there_is_room():
 
 def test_no_chunks_means_no_cues():
     assert build_cues([], audio_duration=1.0) == []
+
+
+def test_write_srt_reports_unwritable_path(tmp_path):
+    from tts_agent.errors import OutputError
+
+    with pytest.raises(OutputError, match="Could not write subtitle"):
+        write_srt([Cue(0.0, 1.0, "Hi.")], tmp_path)  # a directory
+
+
+def test_single_overlong_word_gets_its_own_cue():
+    word = "x" * 100
+    cues = build_cues([timed(f"Start {word} end.", 0.0, 0.01)], audio_duration=5.0)
+
+    assert word in [c.text for c in cues]
+    assert one_line(cues) == f"Start {word} end."
+
+
+def test_unvoiced_first_sentence_joins_the_next_cue():
+    words = (WordTiming("Two", 0.0, 0.5),)
+    chunk = Chunk("One. Two.", 0.0, 0.6, words)
+
+    cues = build_cues([chunk], audio_duration=0.6)
+
+    assert one_line(cues) == "One. Two."
+    assert len(cues) == 1
+
+
+def test_blank_tokens_are_ignored():
+    words = (WordTiming(" ", 0.0, 0.1), WordTiming("Hi", 0.1, 0.4))
+
+    assert build_cues([Chunk("Hi.", 0.0, 0.5, words)], audio_duration=0.5)[0].start == 0.1

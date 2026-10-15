@@ -9,8 +9,10 @@ import soundfile as sf
 from tts_agent.errors import OutputError
 from tts_agent.processing.audio_processor import (
     _MP3_BITRATES,
+    concatenate,
     duration_seconds,
     encode_mp3,
+    silence,
     write_audio,
     write_mp3,
     write_wav,
@@ -137,3 +139,36 @@ def test_write_audio_dispatches_by_format(tmp_path):
     assert sf.info(write_audio(audio, 24_000, tmp_path / "a.mp3", "mp3")).format == "MP3"
     with pytest.raises(OutputError):
         write_audio(audio, 24_000, tmp_path / "a.ogg", "ogg")
+
+
+# --- concatenation and silence ---------------------------------------------------------------
+
+
+def test_concatenate_keeps_order_and_length():
+    parts = [np.full(10, 0.1), np.full(5, 0.2), np.full(7, 0.3)]
+
+    joined = concatenate(parts)
+
+    assert joined.dtype == np.float32
+    assert len(joined) == 22
+    np.testing.assert_allclose(joined[:10], 0.1)
+    np.testing.assert_allclose(joined[10:15], 0.2)
+    np.testing.assert_allclose(joined[15:], 0.3)
+
+
+def test_concatenate_flattens_and_handles_empty_input():
+    assert len(concatenate([])) == 0
+    assert concatenate([np.zeros((2, 3)), np.zeros(0)]).shape == (6,)
+
+
+@pytest.mark.parametrize(("ms", "samples"), [(0, 0), (250, 6000), (700, 16800), (1, 24)])
+def test_silence_length(ms, samples):
+    block = silence(ms, 24_000)
+
+    assert len(block) == samples
+    assert not block.any()
+
+
+def test_mp3_reports_unwritable_path(tmp_path):
+    with pytest.raises(OutputError, match="Could not write MP3"):
+        write_mp3(np.zeros(2400, dtype=np.float32), 24_000, tmp_path)  # a directory

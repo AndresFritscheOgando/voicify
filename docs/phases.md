@@ -24,7 +24,7 @@ Related context:
 | 6 | CLI and Python API | Done (2026-10-15) |
 | 7 | Output extras: MP3 + SRT | Done (listening sync check passed 2026-10-15) |
 | 8 | Script controls | Done (2026-10-15) |
-| 9 | Testing hardening and documentation | Not started |
+| 9 | Testing hardening and documentation | Done (2026-10-15) |
 
 Rules that apply to every phase:
 
@@ -588,16 +588,48 @@ result.failed_chunks, result.subtitle_path  # (Phase 7)
 
 **Definition of Done checklist**
 
-- [ ] Installs and runs locally from a clean clone.
-- [ ] Text input works both directly and from a file.
-- [ ] Generates audible speech.
-- [ ] Voices are selectable.
-- [ ] Long scripts produce one audio file.
-- [ ] Audio is saved locally (WAV/MP3, plus SRT).
-- [ ] No paid API and no network access after the first model download.
-- [ ] The Python interface is usable from other apps.
-- [ ] Automated tests pass.
-- [ ] The README is complete.
+- [x] Installs and runs locally from a clean clone.
+- [x] Text input works both directly and from a file.
+- [x] Generates audible speech.
+- [x] Voices are selectable.
+- [x] Long scripts produce one audio file.
+- [x] Audio is saved locally (WAV/MP3, plus SRT).
+- [x] No paid API and no network access after the first model download.
+- [x] The Python interface is usable from other apps.
+- [x] Automated tests pass.
+- [x] The README is complete.
+
+**Phase 9 notes (2026-10-15): evidence for each item**
+
+| Definition of Done | Evidence |
+|--------------------|----------|
+| Clean clone | `git clone`, then `uv sync` (9 s with a warm uv cache), gives `torch 2.14.1+cu130`, CUDA available, all tests passing, and ruff clean. `voicify --file scripts/example.txt --format mp3` and `python main.py --text ...` both produced audio offline (exit 0). The first run in a fresh environment spent 42.6 s loading (bytecode compilation). |
+| Text and file input | `--text` / `--file` and `generate(text=...)` / `generate(file=...)`, with CLI and API tests and the README examples |
+| Audible speech | Phases 3–8 listening checks, plus the `-m model` RMS check |
+| Voices selectable | 28 English voices, `--voice` / `voice=`, three checked by ear in Phase 4 |
+| Long scripts → one file | 2,873 words become one 16.2-minute file (Phase 5) |
+| WAV/MP3 + SRT saved | Phase 7: MP3 is the exact WAV length, and the SRT is in sync (confirmed by ear) |
+| No network after download | **Fixed in this phase.** Kokoro called `hf_hub_download` on every load, which made three metadata requests to huggingface.co per run unless `HF_HUB_OFFLINE=1` was set. `KokoroEngine` now resolves cached files itself (`model_file()`: `try_to_load_from_cache`, and downloads only when a file is missing). With every socket connect blocked, generation succeeds with **0 connection attempts**, with and without `HF_HUB_OFFLINE`. This is pinned by a `-m model` test. No paid API is used anywhere. |
+| Python interface | `from tts_agent import TTSAgent`, with engine injection. Both README Python examples run as written. |
+| Automated tests | 403 mock tests in about 5 s (with `HF_HUB_OFFLINE=1`), 10 `-m model` tests, and ruff clean. Coverage is 95% for the mock suite and 98% with the model tests included. |
+| README complete | All 10 required sections, plus Development and License and credits. All 8 `voicify` commands and both Python blocks in it were executed as written (exit 0). |
+
+- **Test gaps filled:** `concatenate()` and `silence()` (the "audio concatenation" row had no direct
+  test), MP3 and SRT write errors, default Kokoro engine construction, an over-long single word and
+  an unvoiced first cue in subtitles, token skipping in `map_words`, a non-UTF-8 dictionary, and the
+  cache-or-download logic.
+- **The CPU-only variant was verified** by following the README in a fresh clone: switching the index
+  URL to `/whl/cpu`, then `uv lock && uv sync` (23 s), gave `torch 2.14.1+cpu`, `cuda_unavailable
+  fallback=cpu`, and audio generated. The environment is **0.9 GB, versus 3.3 GB** with CUDA.
+- **Offline error message:** a missing file under `HF_HUB_OFFLINE=1` now adds "unset HF_HUB_OFFLINE
+  and run once with a network connection" to huggingface_hub's generic message.
+- **Licenses:**
+  - The model, voices, kokoro, and misaki are Apache-2.0.
+  - `lameenc` (bundles LAME) is LGPL-3.0-or-later.
+  - `espeakng-loader` bundles espeak-ng, which is GPL-3.0.
+  - These are software licenses on unmodified wheels. They do not change decision D2, which is
+    about the model and voices used to generate audio. The README states this, together with a
+    note for anyone redistributing the software.
 
 ---
 

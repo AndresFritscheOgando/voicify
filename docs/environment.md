@@ -25,8 +25,8 @@ Captured on 2026-10-15 from the development machine. Re-check if the hardware or
    will pin the PyTorch index explicitly.
 2. **CPU fallback:** `TTS_DEVICE=auto` uses CUDA when `torch.cuda.is_available()` is true, otherwise CPU.
    `TTS_DEVICE=cpu` forces CPU, which is useful for checking the README instructions for users without a GPU.
-3. **Disk:** budget about 3–4 GB for the venv (CUDA torch is large) plus about 350 MB for model and
-   voice files in the Hugging Face cache.
+3. **Disk:** the venv measured 3.3 GB with CUDA torch, or 0.9 GB with the CPU-only wheels
+   (Phase 9), plus about 340 MB for the model and all 28 English voices in the Hugging Face cache.
 
 ## Expected resource use (to be measured)
 
