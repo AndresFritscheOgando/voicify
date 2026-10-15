@@ -66,6 +66,8 @@ def test_blank_values_fall_back_to_defaults():
         {"TTS_MAX_CHUNK_CHARS": "lots"},
         {"TTS_CHUNK_RETRIES": "-1"},
         {"TTS_DEFAULT_SPEED": "fast"},
+        {"TTS_DEFAULT_SPEED": "0.4"},
+        {"TTS_DEFAULT_SPEED": "2.5"},
         {"TTS_SUBTITLES": "maybe"},
     ],
 )

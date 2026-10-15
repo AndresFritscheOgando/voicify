@@ -7,8 +7,9 @@ import numpy as np
 from tts_agent.engines.base import TTSEngine, VoiceInfo
 
 MOCK_VOICES = [
-    VoiceInfo("af_heart", "Heart", "en-us", "female", "Mock voice"),
-    VoiceInfo("am_michael", "Michael", "en-us", "male", "Mock voice"),
+    VoiceInfo("af_heart", "Heart", "en-us", "female", "American", "Mock voice"),
+    VoiceInfo("am_michael", "Michael", "en-us", "male", "American", "Mock voice"),
+    VoiceInfo("bf_emma", "Emma", "en-gb", "female", "British", "Mock voice"),
 ]
 
 

@@ -25,7 +25,7 @@ These are reasonable defaults. Any of them can be changed.
 
 | Topic | Default | Why |
 |-------|---------|-----|
-| Default voice | `af_heart` | Generally rated Kokoro's highest-quality English voice. Will be confirmed by ear in Phase 4. |
+| Default voice | `af_heart` | Kokoro's only grade-A English voice. Confirmed by ear in Phase 4 (2026-10-15). |
 | Sample rate | 24 kHz mono, 16-bit PCM WAV | Kokoro's native output, so no resampling. |
 | MP3 bitrate | 192 kbps CBR | Transparent for speech, and fine for YouTube upload. |
 | Sentence pause | ~250 ms | Kokoro already pauses naturally inside a chunk. This only smooths chunk seams. |
@@ -47,4 +47,4 @@ These are reasonable defaults. Any of them can be changed.
   `tokens` with `start_ts`/`end_ts` in seconds (e.g. `Welcome 0.275–0.700`). Whether they are accurate
   enough for SRT is judged in Phase 7.
 - **Inline phoneme syntax** `[word](/phonemes/)`: does it work through `KPipeline` for the pronunciation dictionary? (Phase 8)
-- **Default voice:** confirm `af_heart` by listening, or choose another. (Phase 4)
+- ~~**Default voice:**~~ **Resolved in Phase 4:** `af_heart` stays the default after listening to all 28 English voices.

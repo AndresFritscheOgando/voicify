@@ -19,7 +19,7 @@ Related context:
 | 1 | Research and design | Done (approved 2026-10-15) |
 | 2 | Project setup | Done, pending a listening check of the smoke WAV |
 | 3 | Basic speech generation (MVP) | Done (listening check passed 2026-10-15) |
-| 4 | Multiple voices | Not started |
+| 4 | Multiple voices | Done (listening check passed 2026-10-15) |
 | 5 | Long-form narration | Not started |
 | 6 | CLI and Python API | Not started |
 | 7 | Output extras: MP3 + SRT | Not started |
@@ -193,10 +193,27 @@ Rules that apply to every phase:
 
 **Acceptance criteria**
 
-- [ ] `agent.list_voices()` returns the English catalog.
-- [ ] At least three different voices produce distinguishable audio (checked by ear).
-- [ ] An unsupported voice fails with a helpful message.
-- [ ] Speed changes measurably affect duration (a test with real audio, marked `@pytest.mark.model`).
+- [x] `agent.list_voices()` returns the English catalog.
+- [x] At least three different voices produce distinguishable audio (checked by ear).
+- [x] An unsupported voice fails with a helpful message.
+- [x] Speed changes measurably affect duration (a test with real audio, marked `@pytest.mark.model`).
+
+**Phase 4 notes (2026-10-15)**
+
+- The catalog has all **28 English voices** (American: 11 female, 9 male; British: 4 female, 4 male).
+  It matches both `VOICES.md` and the `voices/` files in `hexgrad/Kokoro-82M`. `VoiceInfo` gained
+  an `accent` field. `description` holds the overall grade from `VOICES.md`, e.g. `Grade A`.
+- Voice ids are case-insensitive. `"default"` or `None` resolves to `TTS_DEFAULT_VOICE`. An unknown id
+  raises `UnsupportedVoiceError` with up to three `difflib` suggestions, for example
+  `Unsupported voice 'af_hart'. Did you mean: af_heart?`. Validation happens in `TTSAgent` against
+  `engine.list_voices()`, so it works for any engine, and it runs before anything is synthesized or written.
+- Speed must be a number within 0.5–2.0. That applies to the `speed` argument and to `TTS_DEFAULT_SPEED`.
+  Booleans, NaN, and infinity are rejected.
+- Real audio, `af_heart`, at speeds 0.5 / 1.0 / 2.0 gave 17.07 s / 8.55 s / 4.45 s.
+- All 28 voices were downloaded once (14.7 MB together), then each was rendered with
+  `HF_HUB_OFFLINE=1`. Samples are in `outputs/phase4_voices/<id>.wav`, plus `speed_*.wav`.
+- `pytest -m model` (3 tests: example sentence, speed vs. duration, distinct voices) passes offline.
+- Voice blending such as `af_heart:60,am_michael:40` is still out of scope (see Future improvements).
 
 ---
 

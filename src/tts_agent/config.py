@@ -14,6 +14,9 @@ from tts_agent.errors import InvalidOptionError
 DEVICES = ("auto", "cuda", "cpu")
 CHUNK_ERROR_POLICIES = ("skip", "abort")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+MIN_SPEED = 0.5
+MAX_SPEED = 2.0
+DEFAULT_VOICE_ALIAS = "default"
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -50,6 +53,7 @@ class Settings:
             raise InvalidOptionError(
                 f"TTS_LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {self.log_level!r}"
             )
+        validate_speed(self.default_speed, name="TTS_DEFAULT_SPEED")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -92,6 +96,15 @@ class Settings:
         if (v := get("TTS_LOG_LEVEL")) is not None:
             kwargs["log_level"] = v.upper()
         return cls(**kwargs)  # type: ignore[arg-type]
+
+
+def validate_speed(speed: object, name: str = "speed") -> float:
+    """Return `speed` as a float, or raise `InvalidOptionError` if it is outside 0.5-2.0."""
+    if isinstance(speed, bool) or not isinstance(speed, int | float):
+        raise InvalidOptionError(f"{name} must be a number, got {speed!r}")
+    if not MIN_SPEED <= speed <= MAX_SPEED:  # also rejects NaN
+        raise InvalidOptionError(f"{name} must be between {MIN_SPEED} and {MAX_SPEED}, got {speed}")
+    return float(speed)
 
 
 def _parse_int(name: str, value: str) -> int:

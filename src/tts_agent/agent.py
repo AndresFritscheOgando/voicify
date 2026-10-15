@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tts_agent.config import Settings
+from tts_agent.config import DEFAULT_VOICE_ALIAS, Settings, validate_speed
 from tts_agent.engines.base import TTSEngine, VoiceInfo
-from tts_agent.errors import EmptyTextError, InvalidOptionError, SynthesisError
+from tts_agent.errors import (
+    EmptyTextError,
+    InvalidOptionError,
+    SynthesisError,
+    UnsupportedVoiceError,
+)
 from tts_agent.processing.audio_processor import duration_seconds, write_wav
 from tts_agent.utils.file_utils import resolve_output_path
 
@@ -51,21 +57,22 @@ class TTSAgent:
     def generate(
         self,
         text: str,
-        voice: str | None = None,
+        voice: str | None = DEFAULT_VOICE_ALIAS,
         output_path: str | Path | None = None,
         speed: float | None = None,
         overwrite: bool = False,
     ) -> GenerationResult:
         """Synthesize `text` and write it as a WAV file.
 
-        `voice` and `speed` default to the configured defaults. `output_path` defaults to
+        `voice="default"` (or None) uses `TTS_DEFAULT_VOICE`; `speed=None` uses
+        `TTS_DEFAULT_SPEED` and must be within 0.5-2.0. `output_path` defaults to
         `<output_dir>/narration.wav`. An existing file gets a numeric suffix unless `overwrite`.
         """
         if text is None or not text.strip():
             raise EmptyTextError("Text is empty; nothing to synthesize")
         text = text.strip()
-        voice = voice or self.settings.default_voice
-        speed = self.settings.default_speed if speed is None else speed
+        voice = self.resolve_voice(voice)
+        speed = validate_speed(self.settings.default_speed if speed is None else speed)
         target = self._target_path(output_path)
 
         logger.info(
@@ -98,6 +105,25 @@ class TTSAgent:
             generation_seconds=generation_seconds,
             chunk_count=1,
         )
+
+    def resolve_voice(self, voice: str | None = DEFAULT_VOICE_ALIAS) -> str:
+        """Map `"default"`/None to the configured default and check the id against the catalog."""
+        requested = (voice or DEFAULT_VOICE_ALIAS).strip().lower()
+        from_default = requested == DEFAULT_VOICE_ALIAS
+        if from_default:
+            requested = self.settings.default_voice.strip().lower()
+        known = [v.id for v in self.engine.list_voices()]
+        if requested in known:
+            return requested
+
+        message = f"Unsupported voice {requested!r}"
+        if from_default:
+            message += " (from TTS_DEFAULT_VOICE)"
+        suggestions = difflib.get_close_matches(requested, known, n=3, cutoff=0.6)
+        if suggestions:
+            message += f". Did you mean: {', '.join(suggestions)}?"
+        message += " Call list_voices() to see all voices."
+        raise UnsupportedVoiceError(message)
 
     def _target_path(self, output_path: str | Path | None) -> Path:
         if output_path is None:

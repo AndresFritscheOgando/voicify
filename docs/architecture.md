@@ -76,7 +76,8 @@ class VoiceInfo:
     name: str          # "Heart"
     language: str      # "en-us" / "en-gb"
     gender: str        # "female" / "male"
-    description: str = ""
+    accent: str = ""   # "American" / "British"
+    description: str = ""  # quality note, e.g. "Grade A"
 
 @dataclass
 class GenerationResult:

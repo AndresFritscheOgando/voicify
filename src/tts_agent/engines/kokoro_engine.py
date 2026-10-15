@@ -24,10 +24,55 @@ SAMPLE_RATE = 24_000
 # Kokoro picks its G2P from the first letter of the voice id: a = American, b = British.
 _LANG_CODES = {"a": "a", "b": "b"}
 
-# The full English catalog arrives in Phase 4. Until then only the default voice is listed.
-_VOICES = [
-    VoiceInfo("af_heart", "Heart", "en-us", "female", "Default voice"),
-]
+# English voices from Kokoro's VOICES.md (hexgrad/Kokoro-82M, v1.0), with its overall grade.
+# The id prefix encodes accent and gender: a/b = American/British, f/m = female/male.
+_GRADES = {
+    "af_heart": "A",
+    "af_alloy": "C",
+    "af_aoede": "C+",
+    "af_bella": "A-",
+    "af_jessica": "D",
+    "af_kore": "C+",
+    "af_nicole": "B-",
+    "af_nova": "C",
+    "af_river": "D",
+    "af_sarah": "C+",
+    "af_sky": "C-",
+    "am_adam": "F+",
+    "am_echo": "D",
+    "am_eric": "D",
+    "am_fenrir": "C+",
+    "am_liam": "D",
+    "am_michael": "C+",
+    "am_onyx": "D",
+    "am_puck": "C+",
+    "am_santa": "D-",
+    "bf_alice": "D",
+    "bf_emma": "B-",
+    "bf_isabella": "C",
+    "bf_lily": "D",
+    "bm_daniel": "D",
+    "bm_fable": "C",
+    "bm_george": "C",
+    "bm_lewis": "D+",
+}
+_ACCENTS = {"a": ("en-us", "American"), "b": ("en-gb", "British")}
+_GENDERS = {"f": "female", "m": "male"}
+
+
+def _voice_info(voice_id: str, grade: str) -> VoiceInfo:
+    language, accent = _ACCENTS[voice_id[0]]
+    return VoiceInfo(
+        id=voice_id,
+        name=voice_id[3:].capitalize(),
+        language=language,
+        gender=_GENDERS[voice_id[1]],
+        accent=accent,
+        description=f"Grade {grade}",
+    )
+
+
+VOICES = [_voice_info(voice_id, grade) for voice_id, grade in _GRADES.items()]
 
 
 class KokoroEngine(TTSEngine):
@@ -58,7 +103,7 @@ class KokoroEngine(TTSEngine):
         return self._device
 
     def list_voices(self) -> list[VoiceInfo]:
-        return list(_VOICES)
+        return list(VOICES)
 
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray:
         pipeline = self._pipeline_for(voice)

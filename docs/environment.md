@@ -50,4 +50,5 @@ _Phase 2 numbers come from the smoke test: one 15-word sentence, voice `af_heart
 | Warm synthesis | CPU | 5.55 s | 0.85 s | 0.15 |
 
 Peak VRAM allocated by torch: about 690 MB. The Hugging Face cache holds about 313 MB after the
-first run (model plus `af_heart`). Each other voice adds about 0.5 MB on first use.
+first run (model plus `af_heart`). Each other voice adds about 0.5 MB on first use; all 28 English
+voices together are 14.7 MB, for about 342 MB in total (Phase 4).
