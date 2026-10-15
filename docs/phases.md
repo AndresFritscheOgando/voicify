@@ -23,7 +23,7 @@ Related context:
 | 5 | Long-form narration | Done (listening spot-check passed 2026-10-15) |
 | 6 | CLI and Python API | Done (2026-10-15) |
 | 7 | Output extras: MP3 + SRT | Done (listening sync check passed 2026-10-15) |
-| 8 | Script controls | Not started |
+| 8 | Script controls | Done (2026-10-15) |
 | 9 | Testing hardening and documentation | Not started |
 
 Rules that apply to every phase:
@@ -476,9 +476,76 @@ result.failed_chunks, result.subtitle_path  # (Phase 7)
 
 **Acceptance criteria**
 
-- [ ] Unit tests cover marker parsing, dictionary substitution (whole-word, not inside
+- [x] Unit tests cover marker parsing, dictionary substitution (whole-word, not inside
       other words), and each normalization rule.
-- [ ] A real-audio check confirms pause lengths are within ±50 ms of the requested value.
+- [x] A real-audio check confirms pause lengths are within ±50 ms of the requested value.
+
+**Phase 8 notes (2026-10-15)**
+
+- **Pause markers, real audio:** a script with `[pause 1s]` at the start, then 1 s, 1.5 s, 800 ms,
+  2 s, 300 ms and 3 s markers, and `[pause 500ms]` at the end, was rendered with `af_heart`,
+  `am_michael`, and `bf_emma` (`outputs/phase8/pauses_*.wav`). The silence measured at each marker
+  (5 ms RMS windows at −40 dBFS) is within **0–30 ms** of the request; the worst is 30 ms on
+  `am_michael`. At a stricter −50 dBFS threshold, every marker, the lead-in, and the tail measure
+  exactly as requested.
+- **Exact pauses need trimming.** Kokoro adds its own silence: about 0.2–0.3 s before speech and
+  some after. Next to a marker, that edge silence is cut (RMS over 0.01, with a 5 ms fade so there
+  is no click) and the exact marker silence goes in its place. Ordinary sentence and paragraph
+  pauses still keep Kokoro's silence, as approved in Phase 5. So a 700 ms paragraph pause
+  *sounds* like about 1.4–1.8 s. Making those exact as well would be a small change, left for a
+  later decision.
+- **Marker rules:**
+  - Markers are case-insensitive, and consecutive markers add up.
+  - A marker replaces the sentence or paragraph pause at its boundary.
+  - Markers at the start or end of the text give leading or trailing silence.
+  - A marker next to a chunk that failed still applies.
+  - `[pause 2]` (no unit) and other malformed markers log `malformed_pause_marker` and use 1 s.
+  - Other bracketed text, such as `[briefly]`, is spoken as written.
+- **Pronunciation dictionary** (`processing/pronunciations.py`, example in
+  `scripts/pronunciations.example.txt`):
+  - The file has one `word = respelling` per line, with `#` for comments.
+  - `/i` after the word ignores case.
+  - A value in slashes (`Kokoro = /kˈOkəɹO/`) becomes misaki's inline phoneme syntax
+    `[Kokoro](/kˈOkəɹO/)`. **That syntax works through `KPipeline`**: "Kokoro" was read
+    `kəkˈɔɹO` by default and exactly as given with it.
+  - Matching is whole-word, using lookarounds so keys like `C++` and `Dr. Who` work. Longer
+    keys win.
+  - Errors name the line (`words.txt:3: ...`), and a later duplicate wins with a warning.
+  - `.toml` is not supported; the plain format covers the need.
+- **Normalization** (`processing/normalizer.py`, `TTS_NORMALIZE=false` turns it off):
+  - misaki was probed on years, ordinals, currency, percentages, decimals, titles, acronyms,
+    times, units, phone numbers, ranges, Roman numerals, and fractions.
+  - **Left alone (already correct):** years, ordinals, `$`/`£`/`€`, `%`, decimals,
+    `Dr.`/`Mr.`/`Mrs.`/`Ms.`, `St.` before a name, `No.`, `vs.`, acronyms (NASA, FBI, SQL),
+    `lbs`, `3 pm`, and negative numbers.
+  - **Rules added, one per observed failure:**
+    - `St.` after a name becomes Street; `Ave.`/`Rd.`/`Blvd.` are expanded.
+    - Titles before a name are expanded: `Prof.`, `Gov.`, `Gen.`, `Capt.`, `Lt.`, `Sgt.`,
+      `Rev.`, `Hon.`, `Mt.`, `Ft.`.
+    - `Jr.`/`Sr.` are expanded.
+    - So are `Fig.`, `Vol.`, `Ch.`, `Sec.`, `Eq.`, `pp.`, `Dept.`, `Univ.`, `Approx.`,
+      `Inc.`, and `Corp.`. A sentence-final period is kept.
+    - 21 units after a number (km, kg, ml, L, ft, mi, mph, km/h, GB, °C, ...), singular after
+      1 or "a".
+    - Clock times: `3:30 pm` becomes "3 30 PM", `9:00` "9 o'clock", `3:05` "3 oh 5", and
+      `7am` "7 AM".
+    - Phone numbers are read digit by digit.
+    - Numeric ranges: `1-10` and `10–20` become "to".
+    - Roman numerals II–XXXIX after a capitalized word: "World War 2", but "Henry the 8th".
+    - Common fractions (`1/2`, `3/4`, ...), `5x` as "5 times", and `#1` as "number 1".
+  - Left out on purpose, as ambiguous: `5 in`, `5 m`, dates, `4/5`, ISO dates, and version
+    numbers.
+  - Each rule has a test, plus a "left alone" list. A `-m model` test checks misaki's phonemes
+    before and after for five of the rules.
+- **Original spelling in subtitles:** the dictionary and normalization rewrite only what the engine
+  reads (`processing/spoken.py`). Each rewrite records its offsets, so the engine's word timings
+  are mapped back onto the original words. The SRT shows `Main St.`, `3:30 pm`, and `555-1234`,
+  timed correctly. The dictionary is applied first, so its entries win over normalization.
+- `generate(..., pronunciations=PATH)`, `--pronunciations PATH` / `TTS_PRONUNCIATIONS`,
+  `TTS_NORMALIZE`, and `--help` documents the markers. A bad dictionary is a usage error (exit 2)
+  raised before any synthesis.
+- Tests: 386 mock tests in about 4.5 s (124 new for script controls, including 48 normalization
+  cases and 18 "left alone" cases) and 9 `-m model` tests.
 
 ---
 

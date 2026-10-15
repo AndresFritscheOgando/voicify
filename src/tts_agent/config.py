@@ -38,6 +38,7 @@ class Settings:
     on_chunk_error: str = "skip"
     pronunciations: Path | None = None
     subtitles: bool = True
+    normalize: bool = True
     log_level: str = "INFO"
 
     def __post_init__(self) -> None:
@@ -101,6 +102,8 @@ class Settings:
             kwargs["pronunciations"] = Path(v)
         if (v := get("TTS_SUBTITLES")) is not None:
             kwargs["subtitles"] = _parse_bool("TTS_SUBTITLES", v)
+        if (v := get("TTS_NORMALIZE")) is not None:
+            kwargs["normalize"] = _parse_bool("TTS_NORMALIZE", v)
         if (v := get("TTS_LOG_LEVEL")) is not None:
             kwargs["log_level"] = v.upper()
         return cls(**kwargs)  # type: ignore[arg-type]

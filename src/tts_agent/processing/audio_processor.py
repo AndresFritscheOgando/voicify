@@ -156,6 +156,54 @@ def _with_gapless_header(frames: bytes, sample_count: int) -> bytes:
     return bytes(info) + frames
 
 
+SILENCE_THRESHOLD = 0.01  # RMS over 5 ms windows, about -40 dBFS
+_WINDOW_MS = 5
+_FADE_MS = 5
+
+
+def leading_silence(audio: np.ndarray, sample_rate: int) -> int:
+    """Samples of near-silence at the start of `audio`, in whole 5 ms windows."""
+    return _silent_windows(audio, sample_rate) * _window(sample_rate)
+
+
+def trailing_silence(audio: np.ndarray, sample_rate: int) -> int:
+    """Samples of near-silence at the end of `audio`, in whole 5 ms windows."""
+    window = _window(sample_rate)
+    remainder = len(audio) % window
+    windows = _silent_windows(audio[remainder:][::-1], sample_rate)
+    silent = windows * window
+    return silent + remainder if silent == len(audio) - remainder else silent
+
+
+def fade(audio: np.ndarray, sample_rate: int, fade_in: bool) -> np.ndarray:
+    """A 5 ms linear fade at a cut edge, so trimming never clicks."""
+    n = min(len(audio), round(sample_rate * _FADE_MS / 1000))
+    if n == 0:
+        return audio
+    out = np.array(audio, dtype=np.float32, copy=True)
+    ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    if fade_in:
+        out[:n] *= ramp
+    else:
+        out[-n:] *= ramp[::-1]
+    return out
+
+
+def _window(sample_rate: int) -> int:
+    return max(1, round(sample_rate * _WINDOW_MS / 1000))
+
+
+def _silent_windows(audio: np.ndarray, sample_rate: int) -> int:
+    window = _window(sample_rate)
+    count = len(audio) // window
+    if count == 0:
+        return 0
+    frames = np.asarray(audio[: count * window], dtype=np.float32).reshape(count, window)
+    loud = np.sqrt(np.mean(frames**2, axis=1)) > SILENCE_THRESHOLD
+    first_loud = int(np.argmax(loud)) if loud.any() else count
+    return first_loud
+
+
 def silence(milliseconds: int, sample_rate: int) -> np.ndarray:
     """A block of float32 silence."""
     return np.zeros(round(sample_rate * milliseconds / 1000), dtype=np.float32)

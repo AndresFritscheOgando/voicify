@@ -46,5 +46,5 @@ These are reasonable defaults. Any of them can be changed.
 - ~~**Token timestamps:**~~ **Resolved in Phase 7:** yes, and they are used for SRT timing. The
   character-proportional split was a median 0.34 s off (30% over 0.5 s). The SRT built from token
   times sits a median 0.07 s from the actual speech onsets.
-- **Inline phoneme syntax** `[word](/phonemes/)`: does it work through `KPipeline` for the pronunciation dictionary? (Phase 8)
+- ~~**Inline phoneme syntax**~~ **Resolved in Phase 8:** `[word](/phonemes/)` works through `KPipeline`. Dictionary values written as `/phonemes/` use it.
 - ~~**Default voice:**~~ **Resolved in Phase 4:** `af_heart` stays the default after listening to all 28 English voices.

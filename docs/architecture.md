@@ -20,7 +20,10 @@ voicify/                         # repo root (decision D8)
 │   │   ├── kokoro_engine.py     # Kokoro implementation (lazy model load, device select)
 │   │   └── mock_engine.py       # deterministic engine used by tests (not shipped as a default)
 │   ├── processing/
-│   │   ├── text_processor.py    # normalize, markers, sentences, chunks, pronunciations
+│   │   ├── text_processor.py    # normalize, [pause] markers, sentences, chunks
+│   │   ├── spoken.py            # engine text from display text + offset map (Phase 8)
+│   │   ├── pronunciations.py    # pronunciation dictionary -> rewrite rules (Phase 8)
+│   │   ├── normalizer.py        # number/abbreviation rules misaki needs (Phase 8)
 │   │   ├── audio_processor.py   # silence, concat, WAV/MP3 writing, duration
 │   │   └── subtitles.py         # chunk timeline → SRT
 │   └── utils/
@@ -142,6 +145,7 @@ Read from environment variables or `.env`. CLI flags take precedence.
 | `TTS_ON_CHUNK_ERROR` | `skip` | `skip` / `abort` |
 | `TTS_PRONUNCIATIONS` | _(none)_ | Path to the pronunciation dictionary |
 | `TTS_SUBTITLES` | `true` | Write the SRT next to the audio |
+| `TTS_NORMALIZE` | `true` | Apply the number/abbreviation fixes (Phase 8) |
 | `TTS_LOG_LEVEL` | `INFO` | Logging level |
 | `HF_HOME` | HF default | Model cache location (standard Hugging Face variable) |
 | `HF_HUB_OFFLINE` | _(unset)_ | Set to `1` to forbid network access after the first download |

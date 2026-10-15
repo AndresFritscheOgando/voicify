@@ -38,7 +38,12 @@ examples:
   voicify --text "Hello, welcome to my channel." --output outputs/hello.wav
   voicify --file scripts/example.txt --voice am_michael --speed 0.9
   voicify --file scripts/example.txt --format mp3 --keep-wav
+  voicify --file script.txt --pronunciations pronunciations.txt
   voicify --list-voices
+
+script controls:
+  [pause] (1 s), [pause 1.5s] or [pause 800ms] anywhere in the text inserts an exact silence.
+  Blank lines between paragraphs get a longer pause (TTS_PARAGRAPH_PAUSE_MS).
 
 exit codes:
   0 success, 1 generation error, 2 usage or validation error,
@@ -98,6 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--keep-wav", action="store_true", help="with --format mp3, also keep a WAV copy"
     )
+    parser.add_argument(
+        "--pronunciations",
+        metavar="PATH",
+        help="pronunciation dictionary file, one 'word = respelling' per line "
+        "(default: TTS_PRONUNCIATIONS)",
+    )
     parser.add_argument("--device", choices=DEVICES, help="override TTS_DEVICE")
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
@@ -145,6 +156,7 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
             overwrite=args.overwrite,
             subtitles=False if args.no_srt else None,
             keep_wav=args.keep_wav,
+            pronunciations=args.pronunciations,
         )
     except KeyboardInterrupt:
         print("error: interrupted", file=sys.stderr)

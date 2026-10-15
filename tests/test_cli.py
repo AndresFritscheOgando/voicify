@@ -385,3 +385,45 @@ def test_missing_lameenc_is_a_generation_error(monkeypatch, capsys):
 
     assert run(["--text", TEXT, "--format", "mp3"]) == EXIT_GENERATION_ERROR
     assert "lameenc" in single_error_line(capsys.readouterr().err)
+
+
+# --- script controls -------------------------------------------------------------------------
+
+
+def test_pronunciations_flag(engine):
+    Path("words.txt").write_text("SQL = sequel\n", encoding="utf-8")
+
+    assert run(["--text", "I use SQL.", "--pronunciations", "words.txt"], engine) == EXIT_OK
+    assert engine.calls[0][0] == "I use sequel."
+
+
+def test_pronunciations_from_environment(monkeypatch, engine):
+    Path("words.txt").write_text("SQL = sequel\n", encoding="utf-8")
+    monkeypatch.setenv("TTS_PRONUNCIATIONS", "words.txt")
+
+    assert run(["--text", "I use SQL."], engine) == EXIT_OK
+    assert engine.calls[0][0] == "I use sequel."
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [(None, "Pronunciation file not found"), ("SQL sequel\n", "words.txt:1:")],
+)
+def test_bad_pronunciation_file_is_a_usage_error(content, message, engine, capsys):
+    if content is not None:
+        Path("words.txt").write_text(content, encoding="utf-8")
+
+    assert run(["--text", "Hi.", "--pronunciations", "words.txt"], engine) == EXIT_USAGE_ERROR
+    assert message in single_error_line(capsys.readouterr().err)
+    assert engine.calls == []
+
+
+def test_pause_markers_from_the_command_line(engine, capsys):
+    assert run(["--text", "One. [pause 2s] Two."], engine) == EXIT_OK
+    assert [c[0] for c in engine.calls] == ["One.", "Two."]
+
+
+def test_help_explains_pause_markers(capsys):
+    main(["--help"])
+    out = capsys.readouterr().out
+    assert "[pause 1.5s]" in out and "--pronunciations" in out

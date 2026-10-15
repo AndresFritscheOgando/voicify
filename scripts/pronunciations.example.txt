@@ -1,0 +1,12 @@
+# Pronunciation dictionary: one entry per line, "word = how to say it".
+# Matching is whole-word and case-sensitive; add /i after the word to ignore case.
+# Use it with --pronunciations scripts/pronunciations.example.txt (or TTS_PRONUNCIATIONS).
+# Only the audio changes; subtitles keep the original spelling.
+
+# Respell a word
+Kokoro = Koh-koh-roh
+SQL = sequel
+nginx/i = engine x
+
+# Or give exact phonemes between slashes (misaki's phoneme set)
+# Kokoro = /kˈOkəɹO/

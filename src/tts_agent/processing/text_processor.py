@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
 
 from tts_agent.errors import EmptyTextError, InvalidOptionError
+
+logger = logging.getLogger(__name__)
 
 # Plain replacements. Em dashes are kept: misaki already reads "—" as a pause, while "--" loses
 # the pause and turning a range dash ("10–20") into a hyphen makes misaki read "tentwenty".
@@ -56,13 +59,26 @@ _BOUNDARY = re.compile(r"[.!?]+[\"')\]]*(?=\s+)")
 _NEXT_STARTS_SENTENCE = re.compile(r"\s+[\"'(\[]*[A-Z0-9]")
 _LAST_WORD = re.compile(r"(\S+)$")
 
+# Pause markers: [pause], [pause 1.5s], [pause 800ms] (case-insensitive).
+PAUSE_MARKER = re.compile(r"\[\s*pause\b([^\]]*)\]", re.IGNORECASE)
+_PAUSE_LENGTH = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|s)", re.IGNORECASE)
+DEFAULT_PAUSE_MS = 1000
+
 
 @dataclass(frozen=True)
 class Chunk:
+    """A piece of text to synthesize in one engine call.
+
+    `pause_before_ms` / `pause_after_ms` come from `[pause]` markers: an exact silence that
+    replaces the usual sentence or paragraph pause at that boundary. None means no marker.
+    """
+
     index: int
     text: str
     paragraph_index: int
     ends_paragraph: bool
+    pause_before_ms: int | None = None
+    pause_after_ms: int | None = None
 
 
 def normalize_text(text: str) -> str:
@@ -121,34 +137,82 @@ def _is_abbreviation(candidate: str) -> bool:
     return len(word) == 1 and word.isupper()  # an initial such as "J."
 
 
+def parse_pause(marker: str) -> int:
+    """Milliseconds for one `[pause ...]` marker. Malformed markers warn and use the default."""
+    match = PAUSE_MARKER.fullmatch(marker.strip())
+    argument = match.group(1).strip() if match else ""
+    if not argument:
+        return DEFAULT_PAUSE_MS
+    length = _PAUSE_LENGTH.fullmatch(argument)
+    if length is None:
+        logger.warning(
+            "malformed_pause_marker marker=%r using_ms=%d (write [pause 1.5s] or [pause 800ms])",
+            marker,
+            DEFAULT_PAUSE_MS,
+        )
+        return DEFAULT_PAUSE_MS
+    value = float(length.group(1))
+    return round(value if length.group(2).lower() == "ms" else value * 1000)
+
+
+def strip_pause_markers(text: str) -> str:
+    return PAUSE_MARKER.sub(" ", text)
+
+
 def chunk_text(text: str, max_chars: int) -> list[Chunk]:
     """Normalize `text` and pack its sentences into chunks of at most `max_chars` characters.
 
     Chunks never cross a paragraph break and never split a sentence, unless that sentence alone
     is longer than `max_chars`; then it is split at `;`, `:`, `,`, and finally at whitespace.
+    `[pause]` markers are removed from the text; each one forces a chunk boundary and records an
+    exact pause on the chunk before it (or, at the very start, on the first chunk).
     """
     if max_chars < 1:
         raise InvalidOptionError(f"max_chars must be positive, got {max_chars}")
     normalized = normalize_text(text)
-    if not normalized:
+    if not strip_pause_markers(normalized).strip():
         raise EmptyTextError("Text is empty; nothing to synthesize")
 
-    chunks: list[Chunk] = []
+    drafts: list[dict] = []
+    leading_pause: int | None = None
     for paragraph_index, paragraph in enumerate(split_paragraphs(normalized)):
-        pieces: list[str] = []
-        for sentence in split_sentences(paragraph):
-            pieces.extend(_split_long(sentence, max_chars))
-        packed = _pack(pieces, max_chars)
-        for i, chunk in enumerate(packed):
-            chunks.append(
-                Chunk(
-                    index=len(chunks),
-                    text=chunk,
-                    paragraph_index=paragraph_index,
-                    ends_paragraph=i == len(packed) - 1,
-                )
-            )
-    check_integrity(normalized, chunks)
+        paragraph_drafts: list[dict] = []
+        position = 0
+        for marker in [*PAUSE_MARKER.finditer(paragraph), None]:
+            segment = paragraph[position : marker.start() if marker else len(paragraph)].strip()
+            if segment:
+                pieces: list[str] = []
+                for sentence in split_sentences(segment):
+                    pieces.extend(_split_long(sentence, max_chars))
+                for piece in _pack(pieces, max_chars):
+                    paragraph_drafts.append(
+                        {"text": piece, "paragraph_index": paragraph_index, "pause_after": None}
+                    )
+            if marker is None:
+                break
+            pause = parse_pause(marker.group())
+            previous = paragraph_drafts[-1] if paragraph_drafts else drafts[-1] if drafts else None
+            if previous is None:
+                leading_pause = (leading_pause or 0) + pause
+            else:
+                previous["pause_after"] = (previous["pause_after"] or 0) + pause
+            position = marker.end()
+        if paragraph_drafts:
+            paragraph_drafts[-1]["ends_paragraph"] = True
+        drafts.extend(paragraph_drafts)
+
+    chunks = [
+        Chunk(
+            index=i,
+            text=d["text"],
+            paragraph_index=d["paragraph_index"],
+            ends_paragraph=d.get("ends_paragraph", False),
+            pause_before_ms=leading_pause if i == 0 else None,
+            pause_after_ms=d["pause_after"],
+        )
+        for i, d in enumerate(drafts)
+    ]
+    check_integrity(strip_pause_markers(normalized), chunks)
     return chunks
 
 
