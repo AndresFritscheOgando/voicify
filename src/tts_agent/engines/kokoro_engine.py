@@ -10,7 +10,12 @@ import numpy as np
 
 from tts_agent.config import DEVICES
 from tts_agent.engines.base import TTSEngine, VoiceInfo
-from tts_agent.errors import InvalidOptionError, SynthesisError, UnsupportedVoiceError
+from tts_agent.errors import (
+    InvalidOptionError,
+    ModelLoadError,
+    SynthesisError,
+    UnsupportedVoiceError,
+)
 from tts_agent.logging_setup import silence_model_warnings
 
 if TYPE_CHECKING:
@@ -145,7 +150,7 @@ class KokoroEngine(TTSEngine):
 
             model = KModel(repo_id=REPO_ID).to(device).eval()
         except Exception as exc:
-            raise SynthesisError(f"Failed to load the Kokoro model on {device}: {exc}") from exc
+            raise ModelLoadError(f"Failed to load the Kokoro model on {device}: {exc}") from exc
         self._model = model
         self._device = device
         logger.info(
@@ -161,7 +166,7 @@ class KokoroEngine(TTSEngine):
         cuda = torch.cuda.is_available()
         if self._requested_device == "cuda":
             if not cuda:
-                raise SynthesisError(
+                raise ModelLoadError(
                     "TTS_DEVICE=cuda but CUDA is not available. Use auto or cpu, "
                     "or install a CUDA build of PyTorch."
                 )

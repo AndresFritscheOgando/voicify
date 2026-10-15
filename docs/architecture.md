@@ -79,6 +79,13 @@ class VoiceInfo:
     accent: str = ""   # "American" / "British"
     description: str = ""  # quality note, e.g. "Grade A"
 
+@dataclass(frozen=True)
+class ChunkTiming:     # one synthesized chunk's position in the output, in seconds
+    index: int
+    text: str
+    start: float
+    end: float
+
 @dataclass
 class GenerationResult:
     output_path: Path
@@ -90,6 +97,7 @@ class GenerationResult:
     failed_chunks: list[int]
     subtitle_path: Path | None
     format: str
+    timeline: list[ChunkTiming]   # successful chunks only; feeds the SRT in Phase 7
 ```
 
 ## Error hierarchy
@@ -100,7 +108,8 @@ TTSError
 ├── InputFileError         # missing / unreadable / wrong extension / not UTF-8
 ├── UnsupportedVoiceError  # includes suggestions
 ├── InvalidOptionError     # speed out of range, format mismatch
-├── SynthesisError         # all chunks failed, or model failed to load
+├── SynthesisError         # all chunks failed, or a chunk failed with on_chunk_error=abort
+│   └── ModelLoadError     # model failed to load; never retried per chunk
 └── OutputError            # cannot write / encode (e.g., lameenc missing)
 ```
 
@@ -114,7 +123,7 @@ Read from environment variables or `.env`. CLI flags take precedence.
 | `TTS_DEFAULT_VOICE` | `af_heart` | What `voice="default"` resolves to |
 | `TTS_DEFAULT_SPEED` | `1.0` | 0.5–2.0 |
 | `TTS_OUTPUT_DIR` | `outputs` | Used when `--output` is not given |
-| `TTS_MAX_CHUNK_CHARS` | `400` | Chunk size limit |
+| `TTS_MAX_CHUNK_CHARS` | `400` | Chunk size limit (at least 50) |
 | `TTS_SENTENCE_PAUSE_MS` | `250` | Silence between chunks |
 | `TTS_PARAGRAPH_PAUSE_MS` | `700` | Silence at paragraph breaks |
 | `TTS_CHUNK_RETRIES` | `1` | Retries per failed chunk |

@@ -14,6 +14,7 @@ from tts_agent.errors import InvalidOptionError
 DEVICES = ("auto", "cuda", "cpu")
 CHUNK_ERROR_POLICIES = ("skip", "abort")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+MIN_CHUNK_CHARS = 50
 MIN_SPEED = 0.5
 MAX_SPEED = 2.0
 DEFAULT_VOICE_ALIAS = "default"
@@ -54,6 +55,11 @@ class Settings:
                 f"TTS_LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {self.log_level!r}"
             )
         validate_speed(self.default_speed, name="TTS_DEFAULT_SPEED")
+        if self.max_chunk_chars < MIN_CHUNK_CHARS:
+            raise InvalidOptionError(
+                f"TTS_MAX_CHUNK_CHARS must be at least {MIN_CHUNK_CHARS}, "
+                f"got {self.max_chunk_chars}"
+            )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:

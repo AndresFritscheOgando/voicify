@@ -1,4 +1,4 @@
-"""TTSAgent: validate the input, synthesize it, and write the audio file."""
+"""TTSAgent: validate the input, synthesize it chunk by chunk, and write the audio file."""
 
 from __future__ import annotations
 
@@ -8,20 +8,44 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tts_agent.config import DEFAULT_VOICE_ALIAS, Settings, validate_speed
+import numpy as np
+
+from tts_agent.config import (
+    CHUNK_ERROR_POLICIES,
+    DEFAULT_VOICE_ALIAS,
+    Settings,
+    validate_speed,
+)
 from tts_agent.engines.base import TTSEngine, VoiceInfo
 from tts_agent.errors import (
     EmptyTextError,
     InvalidOptionError,
+    ModelLoadError,
     SynthesisError,
     UnsupportedVoiceError,
 )
-from tts_agent.processing.audio_processor import duration_seconds, write_wav
+from tts_agent.processing.audio_processor import (
+    concatenate,
+    duration_seconds,
+    silence,
+    write_wav,
+)
+from tts_agent.processing.text_processor import Chunk, chunk_text
 from tts_agent.utils.file_utils import resolve_output_path
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FILENAME = "narration"
+
+
+@dataclass(frozen=True)
+class ChunkTiming:
+    """Where one synthesized chunk sits in the output audio, in seconds."""
+
+    index: int
+    text: str
+    start: float
+    end: float
 
 
 @dataclass
@@ -35,6 +59,7 @@ class GenerationResult:
     failed_chunks: list[int] = field(default_factory=list)
     subtitle_path: Path | None = None
     format: str = "wav"
+    timeline: list[ChunkTiming] = field(default_factory=list)
 
 
 class TTSAgent:
@@ -61,41 +86,56 @@ class TTSAgent:
         output_path: str | Path | None = None,
         speed: float | None = None,
         overwrite: bool = False,
+        on_chunk_error: str | None = None,
     ) -> GenerationResult:
         """Synthesize `text` and write it as a WAV file.
+
+        The text is split into sentence-aligned chunks that are synthesized in order with the same
+        voice and speed, joined with short pauses (longer at paragraph breaks).
 
         `voice="default"` (or None) uses `TTS_DEFAULT_VOICE`; `speed=None` uses
         `TTS_DEFAULT_SPEED` and must be within 0.5-2.0. `output_path` defaults to
         `<output_dir>/narration.wav`. An existing file gets a numeric suffix unless `overwrite`.
+
+        A chunk that still fails after `TTS_CHUNK_RETRIES` retries is skipped and listed in
+        `failed_chunks` (`on_chunk_error="skip"`), or stops the run (`"abort"`). If every chunk
+        fails, `SynthesisError` is raised and no file is written.
         """
         if text is None or not text.strip():
             raise EmptyTextError("Text is empty; nothing to synthesize")
-        text = text.strip()
         voice = self.resolve_voice(voice)
         speed = validate_speed(self.settings.default_speed if speed is None else speed)
+        policy = (on_chunk_error or self.settings.on_chunk_error).strip().lower()
+        if policy not in CHUNK_ERROR_POLICIES:
+            raise InvalidOptionError(
+                f"on_chunk_error must be one of {', '.join(CHUNK_ERROR_POLICIES)}, got {policy!r}"
+            )
         target = self._target_path(output_path)
+        chunks = chunk_text(text, self.settings.max_chunk_chars)
 
         logger.info(
-            "generate_start engine=%s voice=%s speed=%s chars=%d",
+            "generate_start engine=%s voice=%s speed=%s chars=%d chunks=%d",
             self.engine.name,
             voice,
             speed,
             len(text),
+            len(chunks),
         )
         started = time.perf_counter()
-        audio = self.engine.synthesize(text, voice, speed)
-        if audio is None or len(audio) == 0:
-            raise SynthesisError("The engine returned no audio")
+        audio, timeline, failed = self._synthesize_chunks(chunks, voice, speed, policy)
         generation_seconds = time.perf_counter() - started
 
         path = write_wav(audio, self.engine.sample_rate, resolve_output_path(target, overwrite))
         duration = duration_seconds(audio, self.engine.sample_rate)
-        logger.info(
-            "generate_done path=%s duration_s=%.2f generation_s=%.2f rtf=%.3f",
+        log = logger.warning if failed else logger.info
+        log(
+            "generate_done path=%s duration_s=%.2f generation_s=%.2f rtf=%.3f chunks=%d failed=%s",
             path,
             duration,
             generation_seconds,
             generation_seconds / duration if duration else 0.0,
+            len(chunks),
+            failed or "none",
         )
         return GenerationResult(
             output_path=path,
@@ -103,7 +143,9 @@ class TTSAgent:
             sample_rate=self.engine.sample_rate,
             voice=voice,
             generation_seconds=generation_seconds,
-            chunk_count=1,
+            chunk_count=len(chunks),
+            failed_chunks=failed,
+            timeline=timeline,
         )
 
     def resolve_voice(self, voice: str | None = DEFAULT_VOICE_ALIAS) -> str:
@@ -124,6 +166,79 @@ class TTSAgent:
             message += f". Did you mean: {', '.join(suggestions)}?"
         message += " Call list_voices() to see all voices."
         raise UnsupportedVoiceError(message)
+
+    def _synthesize_chunks(
+        self, chunks: list[Chunk], voice: str, speed: float, policy: str
+    ) -> tuple[np.ndarray, list[ChunkTiming], list[int]]:
+        """Synthesize every chunk in order and join them with pauses.
+
+        Segments are collected in a list and concatenated once at the end.
+        """
+        rate = self.engine.sample_rate
+        segments: list[np.ndarray] = []
+        timeline: list[ChunkTiming] = []
+        failed: list[int] = []
+        position = 0  # samples written so far
+        paragraph_break_pending = False
+        total = len(chunks)
+
+        for chunk in chunks:
+            audio = self._synthesize_with_retries(chunk, voice, speed, total)
+            if audio is None:
+                failed.append(chunk.index)
+                if policy == "abort":
+                    raise SynthesisError(
+                        f"Chunk {chunk.index + 1}/{total} failed; aborting (on_chunk_error=abort)"
+                    )
+            else:
+                if timeline:  # pause between this chunk and the previous successful one
+                    pause_ms = (
+                        self.settings.paragraph_pause_ms
+                        if paragraph_break_pending
+                        else self.settings.sentence_pause_ms
+                    )
+                    gap = silence(pause_ms, rate)
+                    segments.append(gap)
+                    position += len(gap)
+                paragraph_break_pending = False
+                segments.append(audio)
+                timeline.append(
+                    ChunkTiming(
+                        chunk.index, chunk.text, position / rate, (position + len(audio)) / rate
+                    )
+                )
+                position += len(audio)
+            paragraph_break_pending = paragraph_break_pending or chunk.ends_paragraph
+            done = chunk.index + 1
+            logger.info("chunk %d/%d (%d%%)", done, total, done * 100 // total)
+
+        if not timeline:
+            raise SynthesisError(f"All {total} chunk(s) failed to synthesize; no file was written")
+        return concatenate(segments), timeline, failed
+
+    def _synthesize_with_retries(
+        self, chunk: Chunk, voice: str, speed: float, total: int
+    ) -> np.ndarray | None:
+        attempts = 1 + self.settings.chunk_retries
+        for attempt in range(1, attempts + 1):
+            try:
+                audio = self.engine.synthesize(chunk.text, voice, speed)
+                if audio is None or len(audio) == 0:
+                    raise SynthesisError("the engine returned no audio")
+                return np.asarray(audio, dtype=np.float32).reshape(-1)
+            except ModelLoadError:
+                raise
+            except Exception as exc:  # any engine failure is retried, then skipped or aborted
+                logger.warning(
+                    "chunk_failed chunk=%d/%d attempt=%d/%d error=%r text=%r",
+                    chunk.index + 1,
+                    total,
+                    attempt,
+                    attempts,
+                    str(exc),
+                    chunk.text[:60],
+                )
+        return None
 
     def _target_path(self, output_path: str | Path | None) -> Path:
         if output_path is None:

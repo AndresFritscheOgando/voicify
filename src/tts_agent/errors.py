@@ -27,5 +27,9 @@ class SynthesisError(TTSError):
     """The engine failed to load or to produce audio."""
 
 
+class ModelLoadError(SynthesisError):
+    """The engine's model could not be loaded. Never retried per chunk."""
+
+
 class OutputError(TTSError):
     """The output file could not be created or written."""

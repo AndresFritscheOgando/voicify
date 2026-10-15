@@ -27,3 +27,15 @@ def write_wav(audio: np.ndarray, sample_rate: int, path: Path) -> Path:
     except (OSError, RuntimeError) as exc:
         raise OutputError(f"Could not write WAV file {path}: {exc}") from exc
     return path
+
+
+def silence(milliseconds: int, sample_rate: int) -> np.ndarray:
+    """A block of float32 silence."""
+    return np.zeros(round(sample_rate * milliseconds / 1000), dtype=np.float32)
+
+
+def concatenate(segments: list[np.ndarray]) -> np.ndarray:
+    """Join audio segments into one float32 array in a single copy."""
+    if not segments:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate([np.asarray(s, dtype=np.float32).reshape(-1) for s in segments])

@@ -20,7 +20,7 @@ Related context:
 | 2 | Project setup | Done, pending a listening check of the smoke WAV |
 | 3 | Basic speech generation (MVP) | Done (listening check passed 2026-10-15) |
 | 4 | Multiple voices | Done (listening check passed 2026-10-15) |
-| 5 | Long-form narration | Not started |
+| 5 | Long-form narration | Done (listening spot-check passed 2026-10-15) |
 | 6 | CLI and Python API | Not started |
 | 7 | Output extras: MP3 + SRT | Not started |
 | 8 | Script controls | Not started |
@@ -251,11 +251,38 @@ Rules that apply to every phase:
 
 **Acceptance criteria**
 
-- [ ] Unit tests cover sentence splitting, chunk-size limits, order preservation, no
+- [x] Unit tests cover sentence splitting, chunk-size limits, order preservation, no
       duplicates or omissions, oversized sentences, pause insertion, and partial-failure behaviour.
-- [ ] A real script of about 3,000 words produces one WAV whose duration is plausible
+- [x] A real script of about 3,000 words produces one WAV whose duration is plausible
       (about 150 words per minute), with no audible seams or repeats when spot-checked by ear.
-- [ ] Generation time and the real-time factor are logged and recorded in `environment.md`.
+- [x] Generation time and the real-time factor are logged and recorded in `environment.md`.
+
+**Phase 5 notes (2026-10-15)**
+
+- **Real run:** `scripts/long_form_sample.txt` is an original 2,873-word, 32-paragraph narration
+  script, which Phase 7 can reuse. It gave 58 chunks (the longest is 399 characters), 0 failures, and
+  one WAV of 16.2 minutes (`outputs/phase5_long_form.wav`, 46.7 MB). CUDA took 13.7 s (RTF 0.014);
+  CPU took 127.7 s (RTF 0.131). Both produced the same duration. See [environment.md](environment.md).
+- **Pace is 177 words per minute**, faster than the ~150 the plan assumed. That is Kokoro's natural
+  rate for `af_heart` at speed 1.0. For a slower read, set `TTS_DEFAULT_SPEED=0.85`, which gives
+  about 150 wpm.
+- **Dashes, checked against misaki's phonemes:** `—` and a spaced ` - ` are both read as a pause.
+  `--` loses the pause, and turning a range dash `10–20` into `10-20` makes misaki say "tentwenty".
+  So normalization maps `--` and a spaced `–` to `—`, and keeps `—` and range dashes as they are.
+  Smart quotes and `…` become plain `"`, `'`, and `...`.
+- **Sentence splitting** needs terminal punctuation, then whitespace, then a capital letter, digit, or
+  opening quote/bracket. A known abbreviation (`Dr.`, `e.g.`, `U.S.`, ...) or a single capital
+  initial does not end a sentence. Abbreviations that are also everyday words (`No.`, `Sun.`,
+  `Mar.`) are left out, because a missed split costs more than an extra one.
+- `GenerationResult.timeline` lists a `ChunkTiming(index, text, start, end)` for every chunk that
+  was synthesized; Phase 7 builds the SRT from it. Failed chunks get no entry.
+- A skipped chunk leaves no audio and no pause of its own. The pause before the next chunk is the
+  paragraph pause if a paragraph break came anywhere since the last chunk that succeeded.
+- A model that fails to load raises the new `ModelLoadError` (a `SynthesisError`) at once, instead
+  of being retried and skipped chunk by chunk.
+- `TTS_MAX_CHUNK_CHARS` must be at least 50.
+- `generate(..., on_chunk_error=...)` overrides `TTS_ON_CHUNK_ERROR` for a single call.
+- Tests: 136 mock tests in about 3 s, including a 500-sentence run.
 
 ---
 

@@ -7,12 +7,13 @@ import soundfile as sf
 from tts_agent import (
     EmptyTextError,
     InvalidOptionError,
+    ModelLoadError,
     Settings,
     SynthesisError,
     TTSAgent,
     UnsupportedVoiceError,
 )
-from tts_agent.engines.mock_engine import MockEngine
+from tts_agent.engines.mock_engine import FailingMockEngine, MockEngine
 
 EXAMPLE = "Welcome to our channel. Today we are going to explore local text-to-speech."
 
@@ -182,3 +183,205 @@ def test_faster_speed_gives_shorter_audio(agent, tmp_path):
     fast = agent.generate(EXAMPLE, speed=2.0, output_path=tmp_path / "fast.wav")
 
     assert fast.duration_seconds < slow.duration_seconds
+
+
+# --- long-form: chunking, pauses, failures ---------------------------------------------------
+
+RATE = 24_000
+SENTENCE_MS = 250
+PARAGRAPH_MS = 700
+
+THREE_CHUNKS = (
+    "The first chunk has exactly one sentence here.\n\n"
+    "The second chunk opens paragraph number two. "
+    "The third chunk closes paragraph number two."
+)
+SECOND = "The second chunk opens paragraph number two."
+
+
+def chunked_agent(engine, tmp_path, **overrides) -> TTSAgent:
+    options = {
+        "output_dir": tmp_path / "outputs",
+        "max_chunk_chars": 50,
+        "sentence_pause_ms": SENTENCE_MS,
+        "paragraph_pause_ms": PARAGRAPH_MS,
+    }
+    options.update(overrides)
+    return TTSAgent(engine=engine, settings=Settings(**options))
+
+
+def test_chunks_are_synthesized_in_order(tmp_path):
+    engine = MockEngine()
+    result = chunked_agent(engine, tmp_path).generate(THREE_CHUNKS)
+
+    assert [c[0] for c in engine.calls] == [
+        "The first chunk has exactly one sentence here.",
+        SECOND,
+        "The third chunk closes paragraph number two.",
+    ]
+    assert {c[1:] for c in engine.calls} == {("af_heart", 1.0)}
+    assert result.chunk_count == 3
+    assert result.failed_chunks == []
+
+
+def test_pauses_and_timeline(tmp_path):
+    engine = MockEngine()
+    result = chunked_agent(engine, tmp_path).generate(THREE_CHUNKS)
+
+    lengths = [len(MockEngine().synthesize(c[0], "af_heart")) for c in engine.calls]
+    paragraph_gap = PARAGRAPH_MS * RATE // 1000
+    sentence_gap = SENTENCE_MS * RATE // 1000
+    audio, _ = sf.read(result.output_path, dtype="float32")
+    assert len(audio) == sum(lengths) + paragraph_gap + sentence_gap
+
+    second_start = lengths[0] + paragraph_gap
+    third_start = second_start + lengths[1] + sentence_gap
+    starts = [0, second_start, third_start]
+    assert [t.index for t in result.timeline] == [0, 1, 2]
+    for timing, start, length in zip(result.timeline, starts, lengths, strict=True):
+        assert timing.start == pytest.approx(start / RATE)
+        assert timing.end == pytest.approx((start + length) / RATE)
+    assert result.timeline[-1].end == pytest.approx(result.duration_seconds)
+
+    # the gaps really are silent, and the speech around them is not
+    assert np.abs(audio[lengths[0] : second_start]).max() == 0
+    assert np.abs(audio[third_start - sentence_gap : third_start]).max() == 0
+    assert np.abs(audio[: lengths[0]]).max() > 0.1
+
+
+def test_pause_lengths_are_configurable(tmp_path):
+    agent = chunked_agent(MockEngine(), tmp_path, sentence_pause_ms=0, paragraph_pause_ms=1000)
+    result = agent.generate(THREE_CHUNKS)
+
+    assert result.timeline[1].start - result.timeline[0].end == pytest.approx(1.0)
+    assert result.timeline[2].start == pytest.approx(result.timeline[1].end)
+
+
+def test_failed_chunk_is_retried_once_then_succeeds(tmp_path):
+    engine = FailingMockEngine(fail_on=("second",), failures=1)
+    result = chunked_agent(engine, tmp_path).generate(THREE_CHUNKS)
+
+    assert result.failed_chunks == []
+    assert len(result.timeline) == 3
+    assert engine.attempts == {SECOND: 2}
+
+
+def test_retry_count_is_configurable(tmp_path):
+    engine = FailingMockEngine(fail_on=("second",), failures=2)
+    result = chunked_agent(engine, tmp_path, chunk_retries=2).generate(THREE_CHUNKS)
+    assert result.failed_chunks == []
+
+    engine = FailingMockEngine(fail_on=("second",))
+    result = chunked_agent(engine, tmp_path, chunk_retries=0).generate(THREE_CHUNKS)
+    assert result.failed_chunks == [1]
+    assert engine.attempts == {SECOND: 1}
+
+
+def test_failing_chunk_is_skipped_and_reported(tmp_path, caplog):
+    engine = FailingMockEngine(fail_on=("third",))
+    with caplog.at_level("WARNING", logger="tts_agent"):
+        result = chunked_agent(engine, tmp_path).generate(THREE_CHUNKS)
+
+    assert result.failed_chunks == [2]
+    assert result.chunk_count == 3
+    assert [t.index for t in result.timeline] == [0, 1]
+    assert result.output_path.exists()
+    assert result.duration_seconds == pytest.approx(result.timeline[-1].end)
+    assert "chunk_failed chunk=3/3 attempt=2/2" in caplog.text
+
+
+def test_skipped_chunk_keeps_the_paragraph_pause(tmp_path):
+    text = (
+        "The first paragraph has only one chunk.\n\n"
+        "The second paragraph opens with this one. Its other chunk is right here now."
+    )
+
+    engine = FailingMockEngine(fail_on=("first paragraph",))
+    result = chunked_agent(engine, tmp_path).generate(text)
+    assert result.chunk_count == 3
+    assert result.failed_chunks == [0]
+    assert result.timeline[0].start == 0  # no leading pause for the first audio
+    assert result.timeline[1].start - result.timeline[0].end == pytest.approx(SENTENCE_MS / 1000)
+
+    engine = FailingMockEngine(fail_on=("second paragraph",))
+    result = chunked_agent(engine, tmp_path).generate(text)
+    assert result.failed_chunks == [1]
+    # chunk 1 failed between chunk 0 and chunk 2, and a paragraph break came before it
+    assert result.timeline[1].start - result.timeline[0].end == pytest.approx(PARAGRAPH_MS / 1000)
+
+
+def test_abort_policy_stops_and_writes_nothing(tmp_path):
+    engine = FailingMockEngine(fail_on=("second",))
+    agent = chunked_agent(engine, tmp_path, on_chunk_error="abort")
+
+    with pytest.raises(SynthesisError, match="Chunk 2/3 failed"):
+        agent.generate(THREE_CHUNKS)
+    assert not (tmp_path / "outputs").exists()
+    assert len(engine.calls) == 3  # chunk 1, then chunk 2 twice; chunk 3 never runs
+
+
+def test_abort_can_be_chosen_per_call(tmp_path):
+    agent = chunked_agent(FailingMockEngine(fail_on=("second",)), tmp_path)
+
+    with pytest.raises(SynthesisError):
+        agent.generate(THREE_CHUNKS, on_chunk_error="abort")
+
+
+def test_invalid_chunk_error_policy(tmp_path):
+    with pytest.raises(InvalidOptionError, match="on_chunk_error"):
+        chunked_agent(MockEngine(), tmp_path).generate(THREE_CHUNKS, on_chunk_error="ignore")
+
+
+def test_all_chunks_failing_raises_and_writes_nothing(tmp_path):
+    engine = FailingMockEngine(fail_on=("",))
+
+    with pytest.raises(SynthesisError, match="All 3 chunk"):
+        chunked_agent(engine, tmp_path).generate(THREE_CHUNKS)
+    assert not (tmp_path / "outputs").exists()
+
+
+def test_empty_chunk_audio_counts_as_failure(tmp_path):
+    class HalfEmptyEngine(MockEngine):
+        def synthesize(self, text, voice, speed=1.0):
+            audio = super().synthesize(text, voice, speed)
+            return audio[:0] if "second" in text else audio
+
+    result = chunked_agent(HalfEmptyEngine(), tmp_path).generate(THREE_CHUNKS)
+
+    assert result.failed_chunks == [1]
+
+
+def test_model_load_error_is_not_retried_per_chunk(tmp_path):
+    class BrokenEngine(MockEngine):
+        def synthesize(self, text, voice, speed=1.0):
+            self.calls.append((text, voice, speed))
+            raise ModelLoadError("no model")
+
+    engine = BrokenEngine()
+    with pytest.raises(ModelLoadError):
+        chunked_agent(engine, tmp_path).generate(THREE_CHUNKS)
+    assert len(engine.calls) == 1
+
+
+def test_progress_is_logged(tmp_path, caplog):
+    with caplog.at_level("INFO", logger="tts_agent"):
+        chunked_agent(MockEngine(), tmp_path).generate(THREE_CHUNKS)
+
+    assert "chunk 1/3 (33%)" in caplog.text
+    assert "chunk 3/3 (100%)" in caplog.text
+
+
+def test_long_form_500_sentences(tmp_path):
+    sentences = [f"This is sentence number {i}, and it says something." for i in range(500)]
+    paragraphs = [" ".join(sentences[i : i + 10]) for i in range(0, 500, 10)]
+    engine = MockEngine(seconds_per_char=0.001)
+    agent = chunked_agent(engine, tmp_path, max_chunk_chars=400)
+
+    result = agent.generate("\n\n".join(paragraphs))
+
+    assert " ".join(call[0] for call in engine.calls) == " ".join(sentences)
+    assert result.chunk_count == len(engine.calls) == len(result.timeline)
+    assert result.chunk_count >= 50  # at least one chunk per paragraph
+    assert result.failed_chunks == []
+    assert all(len(call[0]) <= 400 for call in engine.calls)
+    assert all(a.end < b.start for a, b in zip(result.timeline, result.timeline[1:], strict=False))
