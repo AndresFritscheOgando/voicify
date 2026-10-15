@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from tts_agent.errors import EmptyTextError, InputFileError, OutputError
@@ -33,11 +34,14 @@ def read_text_file(path: str | Path) -> str:
     return text
 
 
-def resolve_output_path(path: str | Path, overwrite: bool = False) -> Path:
+def resolve_output_path(
+    path: str | Path, overwrite: bool = False, companions: Sequence[str] = ()
+) -> Path:
     """Return the path to write to, creating missing parent directories.
 
     If the file already exists and `overwrite` is False, a numeric suffix is added:
-    `narration.wav` -> `narration_1.wav` -> `narration_2.wav`.
+    `narration.wav` -> `narration_1.wav` -> `narration_2.wav`. `companions` are extensions of
+    files written next to it (such as `.srt`); a name is only taken if those are free too.
     """
     path = Path(path)
     if path.is_dir():
@@ -46,11 +50,15 @@ def resolve_output_path(path: str | Path, overwrite: bool = False) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise OutputError(f"Could not create output directory {path.parent}: {exc}") from exc
-    if overwrite or not path.exists():
+
+    def taken(candidate: Path) -> bool:
+        return candidate.exists() or any(candidate.with_suffix(c).exists() for c in companions)
+
+    if overwrite or not taken(path):
         return path
     counter = 1
     while True:
         candidate = path.with_name(f"{path.stem}_{counter}{path.suffix}")
-        if not candidate.exists():
+        if not taken(candidate):
             return candidate
         counter += 1

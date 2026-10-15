@@ -22,7 +22,7 @@ Related context:
 | 4 | Multiple voices | Done (listening check passed 2026-10-15) |
 | 5 | Long-form narration | Done (listening spot-check passed 2026-10-15) |
 | 6 | CLI and Python API | Done (2026-10-15) |
-| 7 | Output extras: MP3 + SRT | Not started |
+| 7 | Output extras: MP3 + SRT | Done (listening sync check passed 2026-10-15) |
 | 8 | Script controls | Not started |
 | 9 | Testing hardening and documentation | Not started |
 
@@ -403,10 +403,52 @@ result.failed_chunks, result.subtitle_path  # (Phase 7)
 
 **Acceptance criteria**
 
-- [ ] The MP3 plays and its duration is within 50 ms of the WAV.
-- [ ] The SRT parses, timestamps are monotonic and non-overlapping, and the last cue ends
+- [x] The MP3 plays and its duration is within 50 ms of the WAV.
+- [x] The SRT parses, timestamps are monotonic and non-overlapping, and the last cue ends
       no later than the audio duration.
-- [ ] Spot check: subtitles stay in sync with the audio within about 0.5 s on a 5-minute script.
+- [x] Spot check: subtitles stay in sync with the audio within about 0.5 s on a 5-minute script.
+
+**Phase 7 notes (2026-10-15)**
+
+- **The MP3 is 160 kbps, not 192.** 24 kHz MP3 is MPEG-2, where 160 kbps is the maximum, and
+  lameenc silently clamps 192 down to 160. 160 kbps at Kokoro's native 24 kHz avoids resampling and
+  is transparent for speech. Audio at 32 kHz or higher would get 192 kbps (MPEG-1).
+- **The MP3 has a gapless header.** lameenc writes bare frames, so decoders kept LAME's 576-sample
+  start delay and end padding. That made the MP3 56-72 ms longer than the WAV, which failed the
+  50 ms criterion. The writer now adds a Xing `Info` frame with the LAME delay/padding fields.
+  libsndfile/mpg123 then decode it to the **exact** WAV length, sample-aligned. That was checked
+  with clicks at known positions at 22.05, 24, 44.1, and 48 kHz, and by a unit test.
+- **Real checks** use a 5.1-minute excerpt of `scripts/long_form_sample.txt` (910 words, 18 chunks):
+  - The MP3 and the WAV are both 305.450 s (0.0 ms difference), with waveform correlation 0.999.
+    The MP3 is 6.1 MB and the WAV is 14.7 MB.
+  - The SRT has 89 cues, ordered and non-overlapping. The last cue ends at 305.350 s, inside the
+    audio. The longest line is 44 characters and the longest cue is 5.3 s.
+  - **Sync, measured objectively:** for the 79 cues that follow a pause, the cue start is a median
+    0.07 s from the speech onset in the audio (worst 0.12 s), and none is more than 0.5 s off.
+  - The full 16.2-minute script also gives a 0.0 ms MP3/WAV difference.
+  - Listening files: `outputs/phase7/excerpt.mp3` + `excerpt.srt` (+ `excerpt.wav`), and
+    `outputs/phase7/long_form.mp3` + `.srt`.
+- **SRT timing uses Kokoro's word timestamps, not character proportions.** Splitting each chunk's
+  span by character count put sentence starts a median 0.34 s off, with a p95 of 0.92 s and 30%
+  over 0.5 s, which fails the criterion. misaki's token timestamps come from the model's own
+  predicted durations, and all of them matched the text. The engine API gained
+  `synthesize_timed()` and `WordTiming`; `ChunkTiming.words` carries the times on the output
+  clock. Engines without timings fall back to the proportional split.
+- **Cue layout:** one cue per sentence. A sentence over 84 characters or 7 s is split by a small
+  optimizer that balances cue lengths and prefers breaks after `, ; :` or a dash. This avoids
+  stranded tails like "…that most / maps forget to name." Lines are wrapped into two balanced
+  lines of about 42 characters. Cues shorter than 0.3 s are stretched when there is room. An
+  unvoiced sentence with no room joins the previous cue, so subtitle text is never dropped.
+- **File naming:** `<stem>.srt`, plus `<stem>.wav` with `--keep-wav`, sit next to the audio. When
+  auto-suffixing, a name counts as taken if any file in the set exists, so the audio, SRT, and WAV
+  always share one stem. `--keep-wav` without MP3 output is a usage error.
+- **API:** `generate(..., subtitles=None, keep_wav=False)`. `subtitles=None` follows `TTS_SUBTITLES`.
+  `GenerationResult` gained `wav_path`. **CLI:** `--format mp3`, `--no-srt`, `--keep-wav`, and new
+  `Subtitles:` and `WAV copy:` lines in the output.
+- If `lameenc` is missing, MP3 output raises `OutputError` (CLI exit 1) with an install hint. There
+  is no silent WAV fallback.
+- Tests: 262 mock tests in about 4.5 s (18 SRT unit tests, 20 output integration tests, MP3
+  alignment tests, and 9 more CLI tests), plus 4 `-m model` tests including real word timings.
 
 ---
 

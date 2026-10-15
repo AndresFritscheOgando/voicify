@@ -16,7 +16,7 @@ from tts_agent.config import (
     Settings,
     validate_speed,
 )
-from tts_agent.engines.base import TTSEngine, VoiceInfo
+from tts_agent.engines.base import TTSEngine, VoiceInfo, WordTiming
 from tts_agent.errors import (
     EmptyTextError,
     InvalidOptionError,
@@ -29,8 +29,10 @@ from tts_agent.processing.audio_processor import (
     concatenate,
     duration_seconds,
     silence,
+    write_audio,
     write_wav,
 )
+from tts_agent.processing.subtitles import build_cues, write_srt
 from tts_agent.processing.text_processor import Chunk, chunk_text
 from tts_agent.utils.file_utils import read_text_file, resolve_output_path
 
@@ -42,12 +44,16 @@ DEFAULT_FORMAT = "wav"
 
 @dataclass(frozen=True)
 class ChunkTiming:
-    """Where one synthesized chunk sits in the output audio, in seconds."""
+    """Where one synthesized chunk sits in the output audio, in seconds.
+
+    `words` are the engine's word timings shifted to the same clock (empty if it has none).
+    """
 
     index: int
     text: str
     start: float
     end: float
+    words: tuple[WordTiming, ...] = ()
 
 
 @dataclass
@@ -63,6 +69,7 @@ class GenerationResult:
     format: str = "wav"
     timeline: list[ChunkTiming] = field(default_factory=list)
     load_seconds: float = 0.0  # engine/model loading before synthesis; 0 once loaded
+    wav_path: Path | None = None  # the WAV kept next to an MP3 (keep_wav=True)
 
 
 class TTSAgent:
@@ -93,6 +100,8 @@ class TTSAgent:
         format: str | None = None,
         overwrite: bool = False,
         on_chunk_error: str | None = None,
+        subtitles: bool | None = None,
+        keep_wav: bool = False,
     ) -> GenerationResult:
         """Synthesize `text` (or the UTF-8 `.txt` script at `file`) and write an audio file.
 
@@ -104,7 +113,10 @@ class TTSAgent:
         `TTS_DEFAULT_SPEED` and must be within 0.5-2.0. `output_path` defaults to
         `<output_dir>/narration.<format>`. `format` defaults to the extension of `output_path`,
         or `"wav"`; when both are given they must agree. An existing file gets a numeric suffix
-        unless `overwrite`.
+        unless `overwrite`; the suffix is chosen so the subtitle and kept WAV names are free too.
+
+        `subtitles` (default `TTS_SUBTITLES`) writes `<output stem>.srt` next to the audio.
+        `keep_wav=True` with MP3 output also writes `<output stem>.wav`.
 
         A chunk that still fails after `TTS_CHUNK_RETRIES` retries is skipped and listed in
         `failed_chunks` (`on_chunk_error="skip"`), or stops the run (`"abort"`). If every chunk
@@ -119,6 +131,10 @@ class TTSAgent:
                 f"on_chunk_error must be one of {', '.join(CHUNK_ERROR_POLICIES)}, got {policy!r}"
             )
         target, output_format = self._target_path(output_path, format)
+        if keep_wav and output_format != "mp3":
+            raise InvalidOptionError("keep_wav only applies to MP3 output")
+        subtitles = self.settings.subtitles if subtitles is None else subtitles
+        companions = ([".srt"] if subtitles else []) + ([".wav"] if keep_wav else [])
         chunks = chunk_text(text, self.settings.max_chunk_chars)
 
         logger.info(
@@ -137,8 +153,15 @@ class TTSAgent:
         audio, timeline, failed = self._synthesize_chunks(chunks, voice, speed, policy)
         generation_seconds = time.perf_counter() - started
 
-        path = write_wav(audio, self.engine.sample_rate, resolve_output_path(target, overwrite))
-        duration = duration_seconds(audio, self.engine.sample_rate)
+        rate = self.engine.sample_rate
+        path = resolve_output_path(target, overwrite, companions=companions)
+        write_audio(audio, rate, path, output_format)
+        wav_path = write_wav(audio, rate, path.with_suffix(".wav")) if keep_wav else None
+        duration = duration_seconds(audio, rate)
+        subtitle_path = None
+        if subtitles:
+            cues = build_cues(timeline, duration)
+            subtitle_path = write_srt(cues, path.with_suffix(".srt"))
         log = logger.warning if failed else logger.info
         log(
             "generate_done path=%s duration_s=%.2f generation_s=%.2f rtf=%.3f chunks=%d failed=%s",
@@ -157,9 +180,11 @@ class TTSAgent:
             generation_seconds=generation_seconds,
             chunk_count=len(chunks),
             failed_chunks=failed,
+            subtitle_path=subtitle_path,
             format=output_format,
             timeline=timeline,
             load_seconds=load_seconds,
+            wav_path=wav_path,
         )
 
     @staticmethod
@@ -207,8 +232,8 @@ class TTSAgent:
         total = len(chunks)
 
         for chunk in chunks:
-            audio = self._synthesize_with_retries(chunk, voice, speed, total)
-            if audio is None:
+            synthesized = self._synthesize_with_retries(chunk, voice, speed, total)
+            if synthesized is None:
                 failed.append(chunk.index)
                 if policy == "abort":
                     raise SynthesisError(
@@ -225,10 +250,16 @@ class TTSAgent:
                     segments.append(gap)
                     position += len(gap)
                 paragraph_break_pending = False
+                audio, words = synthesized
+                offset = position / rate
                 segments.append(audio)
                 timeline.append(
                     ChunkTiming(
-                        chunk.index, chunk.text, position / rate, (position + len(audio)) / rate
+                        chunk.index,
+                        chunk.text,
+                        offset,
+                        (position + len(audio)) / rate,
+                        tuple(WordTiming(w.text, w.start + offset, w.end + offset) for w in words),
                     )
                 )
                 position += len(audio)
@@ -242,14 +273,14 @@ class TTSAgent:
 
     def _synthesize_with_retries(
         self, chunk: Chunk, voice: str, speed: float, total: int
-    ) -> np.ndarray | None:
+    ) -> tuple[np.ndarray, list[WordTiming]] | None:
         attempts = 1 + self.settings.chunk_retries
         for attempt in range(1, attempts + 1):
             try:
-                audio = self.engine.synthesize(chunk.text, voice, speed)
+                audio, words = self.engine.synthesize_timed(chunk.text, voice, speed)
                 if audio is None or len(audio) == 0:
                     raise SynthesisError("the engine returned no audio")
-                return np.asarray(audio, dtype=np.float32).reshape(-1)
+                return np.asarray(audio, dtype=np.float32).reshape(-1), list(words)
             except ModelLoadError:
                 raise
             except Exception as exc:  # any engine failure is retried, then skipped or aborted

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from tts_agent.config import DEVICES
-from tts_agent.engines.base import TTSEngine, VoiceInfo
+from tts_agent.engines.base import TTSEngine, VoiceInfo, WordTiming
 from tts_agent.errors import (
     InvalidOptionError,
     ModelLoadError,
@@ -115,18 +115,33 @@ class KokoroEngine(TTSEngine):
         self._pipeline_for(voice)
 
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray:
+        return self.synthesize_timed(text, voice, speed)[0]
+
+    def synthesize_timed(
+        self, text: str, voice: str, speed: float = 1.0
+    ) -> tuple[np.ndarray, list[WordTiming]]:
+        """Synthesize and collect misaki's token timestamps (derived from predicted durations)."""
         pipeline = self._pipeline_for(voice)
+        segments: list[np.ndarray] = []
+        words: list[WordTiming] = []
+        offset = 0.0  # Kokoro may yield several segments; their timestamps restart at zero
         try:
-            segments = [
-                _to_numpy(result.audio)
-                for result in pipeline(text, voice=voice, speed=speed)
-                if result.audio is not None
-            ]
+            for result in pipeline(text, voice=voice, speed=speed):
+                if result.audio is None:
+                    continue
+                audio = _to_numpy(result.audio)
+                for token in result.tokens or []:
+                    if token.start_ts is not None and token.end_ts is not None:
+                        words.append(
+                            WordTiming(token.text, offset + token.start_ts, offset + token.end_ts)
+                        )
+                segments.append(audio)
+                offset += len(audio) / SAMPLE_RATE
         except Exception as exc:
             raise SynthesisError(f"Kokoro failed with voice {voice!r}: {exc}") from exc
         if not segments:
             raise SynthesisError("Kokoro produced no audio for the given text")
-        return np.concatenate(segments).astype(np.float32, copy=False)
+        return np.concatenate(segments).astype(np.float32, copy=False), words
 
     def _pipeline_for(self, voice: str) -> KPipeline:
         lang_code = _LANG_CODES.get(voice[:1])

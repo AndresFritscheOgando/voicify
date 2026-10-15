@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -203,7 +204,7 @@ def test_verbose_and_quiet_are_exclusive(capsys):
         (["--text", "hi", "--speed", "0.1"], "speed must be between 0.5 and 2.0"),
         (["--text", "hi", "--speed", "fast"], "invalid float value"),
         (["--text", "hi", "--format", "ogg"], "invalid choice"),
-        (["--text", "hi", "--output", "a.mp3"], "Unsupported output extension '.mp3'"),
+        (["--text", "hi", "--output", "a.ogg"], "Unsupported output extension '.ogg'"),
         (["--text", "hi", "--output", "a.ogg", "--format", "wav"], "Unsupported output extension"),
         (["--text", "hi", "--device", "tpu"], "invalid choice"),
         (["--file", "missing.txt"], "Input file not found"),
@@ -313,3 +314,74 @@ def test_keyboard_interrupt(capsys):
 
     assert run(["--text", TEXT], InterruptedEngine()) == cli.EXIT_INTERRUPTED
     assert "interrupted" in capsys.readouterr().err
+
+
+# --- MP3 and subtitles -----------------------------------------------------------------------
+
+
+def test_srt_is_written_by_default(capsys):
+    assert run(["--text", TEXT]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert Path("outputs/narration.srt").exists()
+    assert "Subtitles:" in out and "narration.srt" in out
+
+
+def test_no_srt(capsys):
+    assert run(["--text", TEXT, "--no-srt"]) == EXIT_OK
+
+    assert not Path("outputs/narration.srt").exists()
+    assert "Subtitles:" not in capsys.readouterr().out
+
+
+def test_subtitles_disabled_by_environment(monkeypatch):
+    monkeypatch.setenv("TTS_SUBTITLES", "false")
+
+    assert run(["--text", TEXT]) == EXIT_OK
+    assert not Path("outputs/narration.srt").exists()
+
+
+def test_format_mp3(capsys):
+    assert run(["--text", TEXT, "--format", "mp3"]) == EXIT_OK
+
+    assert sf.info("outputs/narration.mp3").format == "MP3"
+    assert Path("outputs/narration.srt").exists()
+    assert not Path("outputs/narration.wav").exists()
+    assert "narration.mp3" in capsys.readouterr().out
+
+
+def test_mp3_inferred_from_output_extension():
+    assert run(["--text", TEXT, "--output", "ep/one.mp3"]) == EXIT_OK
+
+    assert sf.info("ep/one.mp3").format == "MP3"
+    assert Path("ep/one.srt").exists()
+
+
+def test_keep_wav(capsys):
+    assert run(["--text", TEXT, "--format", "mp3", "--keep-wav"]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert Path("outputs/narration.mp3").exists()
+    assert Path("outputs/narration.wav").exists()
+    assert "WAV copy:" in out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--text", TEXT, "--keep-wav"],
+        ["--text", TEXT, "--format", "wav", "--keep-wav"],
+        ["--text", TEXT, "--output", "a.wav", "--format", "mp3"],
+    ],
+)
+def test_mp3_option_errors(argv, capsys):
+    assert run(argv) == EXIT_USAGE_ERROR
+    single_error_line(capsys.readouterr().err)
+    assert not Path("outputs").exists()
+
+
+def test_missing_lameenc_is_a_generation_error(monkeypatch, capsys):
+    monkeypatch.setitem(sys.modules, "lameenc", None)
+
+    assert run(["--text", TEXT, "--format", "mp3"]) == EXIT_GENERATION_ERROR
+    assert "lameenc" in single_error_line(capsys.readouterr().err)

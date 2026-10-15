@@ -99,7 +99,7 @@ def test_output_path_without_extension_gets_wav(agent, tmp_path):
 
 def test_unsupported_output_extension(agent, tmp_path):
     with pytest.raises(InvalidOptionError):
-        agent.generate(EXAMPLE, output_path=tmp_path / "clip.mp3")
+        agent.generate(EXAMPLE, output_path=tmp_path / "clip.ogg")
 
 
 def test_output_name_with_dots_keeps_them(agent, tmp_path):
@@ -127,13 +127,11 @@ def test_format_must_be_supported(agent):
         agent.generate(EXAMPLE, format="flac")
 
 
-def test_format_must_match_output_extension(agent, tmp_path, monkeypatch):
-    import tts_agent.agent as agent_module
-
-    # Pretend a second format exists, so a mismatch is possible before Phase 7 adds MP3.
-    monkeypatch.setattr(agent_module, "OUTPUT_FORMATS", ("wav", "mp3"))
+def test_format_must_match_output_extension(agent, tmp_path):
     with pytest.raises(InvalidOptionError, match="does not match format 'mp3'"):
         agent.generate(EXAMPLE, output_path=tmp_path / "a.wav", format="mp3")
+    with pytest.raises(InvalidOptionError, match="does not match format 'wav'"):
+        agent.generate(EXAMPLE, output_path=tmp_path / "a.mp3", format="wav")
 
 
 def test_generate_from_file(agent, mock_engine, tmp_path):
@@ -187,7 +185,7 @@ def test_spec_api_example_runs_unchanged(mock_engine, tmp_path, monkeypatch):
     assert result.output_path == Path("outputs/hello.wav")
     assert (tmp_path / "outputs" / "hello.wav").exists()
     assert result.voice == "af_heart"
-    assert result.subtitle_path is None
+    assert result.subtitle_path == Path("outputs/hello.srt")
 
 
 def test_engine_returning_no_audio_raises(settings, tmp_path):

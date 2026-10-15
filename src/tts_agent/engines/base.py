@@ -20,6 +20,15 @@ class VoiceInfo:
     description: str = ""  # quality note, e.g. "Grade A"
 
 
+@dataclass(frozen=True)
+class WordTiming:
+    """When one spoken word starts and ends, in seconds."""
+
+    text: str
+    start: float
+    end: float
+
+
 class TTSEngine(ABC):
     """A text-to-speech backend.
 
@@ -39,6 +48,16 @@ class TTSEngine(ABC):
 
     @abstractmethod
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray: ...
+
+    def synthesize_timed(
+        self, text: str, voice: str, speed: float = 1.0
+    ) -> tuple[np.ndarray, list[WordTiming]]:
+        """Audio plus per-word timings relative to the start of that audio.
+
+        Engines that cannot time words return an empty list; subtitles then fall back to
+        splitting time by character count.
+        """
+        return self.synthesize(text, voice, speed), []
 
     def prepare(self, voice: str) -> None:  # noqa: B027 - optional hook, a no-op by default
         """Load whatever `voice` needs before the first `synthesize` call. Optional."""

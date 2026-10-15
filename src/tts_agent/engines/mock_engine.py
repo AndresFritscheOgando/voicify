@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import numpy as np
 
-from tts_agent.engines.base import TTSEngine, VoiceInfo
+from tts_agent.engines.base import TTSEngine, VoiceInfo, WordTiming
+
+_TOKEN = re.compile(r"\w+(?:['\-.]\w+)*|[^\w\s]")
 
 MOCK_VOICES = [
     VoiceInfo("af_heart", "Heart", "en-us", "female", "American", "Mock voice"),
@@ -27,11 +30,13 @@ class MockEngine(TTSEngine):
         seconds_per_char: float = 0.01,
         frequency: float = 220.0,
         silent: bool = False,
+        word_timings: bool = True,
     ) -> None:
         self._sample_rate = sample_rate
         self.seconds_per_char = seconds_per_char
         self.frequency = frequency
         self.silent = silent
+        self.word_timings = word_timings
         self.calls: list[tuple[str, str, float]] = []
 
     @property
@@ -52,6 +57,20 @@ class MockEngine(TTSEngine):
             return np.zeros(samples, dtype=np.float32)
         t = np.arange(samples, dtype=np.float32) / self._sample_rate
         return (0.3 * np.sin(2 * np.pi * self.frequency * t)).astype(np.float32)
+
+    def synthesize_timed(
+        self, text: str, voice: str, speed: float = 1.0
+    ) -> tuple[np.ndarray, list[WordTiming]]:
+        """Like Kokoro: words and punctuation as separate tokens, timed by character position."""
+        audio = self.synthesize(text, voice, speed)
+        if not self.word_timings:
+            return audio, []
+        seconds = len(audio) / self._sample_rate
+        scale = seconds / max(len(text), 1)
+        words = [
+            WordTiming(m.group(), m.start() * scale, m.end() * scale) for m in _TOKEN.finditer(text)
+        ]
+        return audio, words
 
 
 class FailingMockEngine(MockEngine):

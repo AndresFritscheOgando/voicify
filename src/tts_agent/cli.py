@@ -37,6 +37,7 @@ EXAMPLES = """\
 examples:
   voicify --text "Hello, welcome to my channel." --output outputs/hello.wav
   voicify --file scripts/example.txt --voice am_michael --speed 0.9
+  voicify --file scripts/example.txt --format mp3 --keep-wav
   voicify --list-voices
 
 exit codes:
@@ -89,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="replace an existing output file instead of adding a _1, _2, ... suffix",
     )
+    parser.add_argument(
+        "--no-srt",
+        action="store_true",
+        help="do not write an .srt subtitle file next to the audio (TTS_SUBTITLES)",
+    )
+    parser.add_argument(
+        "--keep-wav", action="store_true", help="with --format mp3, also keep a WAV copy"
+    )
     parser.add_argument("--device", choices=DEVICES, help="override TTS_DEVICE")
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
@@ -134,6 +143,8 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
             output_path=args.output,
             format=args.format,
             overwrite=args.overwrite,
+            subtitles=False if args.no_srt else None,
+            keep_wav=args.keep_wav,
         )
     except KeyboardInterrupt:
         print("error: interrupted", file=sys.stderr)
@@ -142,6 +153,10 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
         return _report_error(exc, verbose=args.verbose)
 
     print(f"Saved:     {result.output_path}")
+    if result.wav_path:
+        print(f"WAV copy:  {result.wav_path}")
+    if result.subtitle_path:
+        print(f"Subtitles: {result.subtitle_path}")
     print(f"Duration:  {_format_duration(result.duration_seconds)}")
     print(f"Voice:     {result.voice}")
     chunks = f"{result.chunk_count} chunk{'s' if result.chunk_count != 1 else ''}"

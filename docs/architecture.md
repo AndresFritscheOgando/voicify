@@ -70,6 +70,14 @@ class TTSEngine(ABC):
     def list_voices(self) -> list[VoiceInfo]: ...
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> np.ndarray: ...  # float32 mono
     def prepare(self, voice: str) -> None: ...  # optional: load the model before timing starts
+    def synthesize_timed(self, text, voice, speed=1.0) -> tuple[np.ndarray, list[WordTiming]]: ...
+        # optional: default returns synthesize() and no timings; Kokoro returns token timestamps
+
+@dataclass(frozen=True)
+class WordTiming:
+    text: str
+    start: float       # seconds
+    end: float
 
 @dataclass(frozen=True)
 class VoiceInfo:
@@ -86,6 +94,7 @@ class ChunkTiming:     # one synthesized chunk's position in the output, in seco
     text: str
     start: float
     end: float
+    words: tuple[WordTiming, ...]   # engine word timings on the output clock (may be empty)
 
 @dataclass
 class GenerationResult:
@@ -100,6 +109,7 @@ class GenerationResult:
     format: str
     timeline: list[ChunkTiming]   # successful chunks only; feeds the SRT in Phase 7
     load_seconds: float           # model loading, kept out of generation_seconds
+    wav_path: Path | None         # WAV kept next to an MP3 (keep_wav=True)
 ```
 
 ## Error hierarchy

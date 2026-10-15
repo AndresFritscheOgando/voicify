@@ -135,3 +135,21 @@ def test_real_kokoro_voices_differ():
             if a < b:
                 n = min(len(clips[a]), len(clips[b]))
                 assert not np.allclose(clips[a][:n], clips[b][:n], atol=1e-3), (a, b)
+
+
+@pytest.mark.model
+def test_real_kokoro_word_timings_line_up_with_the_text():
+    engine = KokoroEngine()
+    text = "Welcome to our channel. Today we explore the lighthouse at Gull Point."
+
+    audio, words = engine.synthesize_timed(text, "af_heart")
+
+    duration = len(audio) / engine.sample_rate
+    spoken = [w for w in words if w.text.strip(".,")]
+    assert [w.text for w in spoken][:3] == ["Welcome", "to", "our"]
+    assert all(0 <= w.start <= w.end <= duration + 0.05 for w in words)
+    starts = [w.start for w in words]
+    assert starts == sorted(starts)
+    cursor = 0
+    for w in words:  # every token is found in order in the input text
+        cursor = text.index(w.text, cursor)

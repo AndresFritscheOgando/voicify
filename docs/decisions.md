@@ -27,7 +27,7 @@ These are reasonable defaults. Any of them can be changed.
 |-------|---------|-----|
 | Default voice | `af_heart` | Kokoro's only grade-A English voice. Confirmed by ear in Phase 4 (2026-10-15). |
 | Sample rate | 24 kHz mono, 16-bit PCM WAV | Kokoro's native output, so no resampling. |
-| MP3 bitrate | 192 kbps CBR | Transparent for speech, and fine for YouTube upload. |
+| MP3 bitrate | 160 kbps CBR at 24 kHz (192 kbps from 32 kHz up) | 192 kbps is not possible at 24 kHz (MPEG-2 maximum is 160). 160 is transparent for speech and avoids resampling. Changed in Phase 7. |
 | Sentence pause | ~250 ms | Kokoro already pauses naturally inside a chunk. This only smooths chunk seams. |
 | Paragraph pause | ~700 ms | Gives an audible section break in narration. |
 | `[pause]` default | 1.0 s | Easy to reason about when writing scripts. |
@@ -43,8 +43,8 @@ These are reasonable defaults. Any of them can be changed.
   the MSI is not needed. `KPipeline(lang_code="a")` attaches an `EspeakFallback` that loads
   `espeak-ng.dll` from the wheel. Without the fallback, misaki turns unknown words such as
   "Floogleborp" into `❓` and they are not spoken. With it they are phonemized.
-- ~~**Token timestamps:**~~ **Partly resolved in Phase 2:** yes. For English, each `KPipeline` result has
-  `tokens` with `start_ts`/`end_ts` in seconds (e.g. `Welcome 0.275–0.700`). Whether they are accurate
-  enough for SRT is judged in Phase 7.
+- ~~**Token timestamps:**~~ **Resolved in Phase 7:** yes, and they are used for SRT timing. The
+  character-proportional split was a median 0.34 s off (30% over 0.5 s). The SRT built from token
+  times sits a median 0.07 s from the actual speech onsets.
 - **Inline phoneme syntax** `[word](/phonemes/)`: does it work through `KPipeline` for the pronunciation dictionary? (Phase 8)
 - ~~**Default voice:**~~ **Resolved in Phase 4:** `af_heart` stays the default after listening to all 28 English voices.
