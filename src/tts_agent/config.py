@@ -1,0 +1,120 @@
+"""Runtime settings, read from environment variables and an optional `.env` file."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+from tts_agent.errors import InvalidOptionError
+
+DEVICES = ("auto", "cuda", "cpu")
+CHUNK_ERROR_POLICIES = ("skip", "abort")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Agent configuration. See `.env.example` for what each value means."""
+
+    device: str = "auto"
+    default_voice: str = "af_heart"
+    default_speed: float = 1.0
+    output_dir: Path = Path("outputs")
+    max_chunk_chars: int = 400
+    sentence_pause_ms: int = 250
+    paragraph_pause_ms: int = 700
+    chunk_retries: int = 1
+    on_chunk_error: str = "skip"
+    pronunciations: Path | None = None
+    subtitles: bool = True
+    log_level: str = "INFO"
+
+    def __post_init__(self) -> None:
+        if self.device not in DEVICES:
+            raise InvalidOptionError(
+                f"TTS_DEVICE must be one of {', '.join(DEVICES)}, got {self.device!r}"
+            )
+        if self.on_chunk_error not in CHUNK_ERROR_POLICIES:
+            raise InvalidOptionError(
+                f"TTS_ON_CHUNK_ERROR must be one of {', '.join(CHUNK_ERROR_POLICIES)}, "
+                f"got {self.on_chunk_error!r}"
+            )
+        if self.log_level not in LOG_LEVELS:
+            raise InvalidOptionError(
+                f"TTS_LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {self.log_level!r}"
+            )
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
+        """Build settings from `environ`, or from `os.environ` plus `.env` when it is None.
+
+        `.env` never overrides variables that are already set in the environment. It is loaded
+        into `os.environ` so that Hugging Face variables such as `HF_HUB_OFFLINE` take effect too.
+        """
+        if environ is None:
+            load_dotenv(override=False)
+            environ = os.environ
+
+        def get(name: str) -> str | None:
+            value = environ.get(name)
+            return value.strip() if value is not None and value.strip() else None
+
+        kwargs: dict[str, object] = {}
+        if (v := get("TTS_DEVICE")) is not None:
+            kwargs["device"] = v.lower()
+        if (v := get("TTS_DEFAULT_VOICE")) is not None:
+            kwargs["default_voice"] = v
+        if (v := get("TTS_DEFAULT_SPEED")) is not None:
+            kwargs["default_speed"] = _parse_float("TTS_DEFAULT_SPEED", v)
+        if (v := get("TTS_OUTPUT_DIR")) is not None:
+            kwargs["output_dir"] = Path(v)
+        if (v := get("TTS_MAX_CHUNK_CHARS")) is not None:
+            kwargs["max_chunk_chars"] = _parse_int("TTS_MAX_CHUNK_CHARS", v)
+        if (v := get("TTS_SENTENCE_PAUSE_MS")) is not None:
+            kwargs["sentence_pause_ms"] = _parse_int("TTS_SENTENCE_PAUSE_MS", v)
+        if (v := get("TTS_PARAGRAPH_PAUSE_MS")) is not None:
+            kwargs["paragraph_pause_ms"] = _parse_int("TTS_PARAGRAPH_PAUSE_MS", v)
+        if (v := get("TTS_CHUNK_RETRIES")) is not None:
+            kwargs["chunk_retries"] = _parse_int("TTS_CHUNK_RETRIES", v)
+        if (v := get("TTS_ON_CHUNK_ERROR")) is not None:
+            kwargs["on_chunk_error"] = v.lower()
+        if (v := get("TTS_PRONUNCIATIONS")) is not None:
+            kwargs["pronunciations"] = Path(v)
+        if (v := get("TTS_SUBTITLES")) is not None:
+            kwargs["subtitles"] = _parse_bool("TTS_SUBTITLES", v)
+        if (v := get("TTS_LOG_LEVEL")) is not None:
+            kwargs["log_level"] = v.upper()
+        return cls(**kwargs)  # type: ignore[arg-type]
+
+
+def _parse_int(name: str, value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise InvalidOptionError(f"{name} must be an integer, got {value!r}") from None
+    if parsed < 0:
+        raise InvalidOptionError(f"{name} must not be negative, got {parsed}")
+    return parsed
+
+
+def _parse_float(name: str, value: str) -> float:
+    try:
+        return float(value)
+    except ValueError:
+        raise InvalidOptionError(f"{name} must be a number, got {value!r}") from None
+
+
+def _parse_bool(name: str, value: str) -> bool:
+    lowered = value.lower()
+    if lowered in _TRUE:
+        return True
+    if lowered in _FALSE:
+        return False
+    raise InvalidOptionError(f"{name} must be true or false, got {value!r}")

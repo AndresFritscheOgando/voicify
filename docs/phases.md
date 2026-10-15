@@ -18,7 +18,7 @@ Related context:
 |---|-------|--------|
 | 1 | Research and design | Done (approved 2026-10-15) |
 | 2 | Project setup | Done, pending a listening check of the smoke WAV |
-| 3 | Basic speech generation (MVP) | Not started |
+| 3 | Basic speech generation (MVP) | Done (listening check passed 2026-10-15) |
 | 4 | Multiple voices | Not started |
 | 5 | Long-form narration | Not started |
 | 6 | CLI and Python API | Not started |
@@ -149,10 +149,26 @@ Rules that apply to every phase:
 
 **Acceptance criteria**
 
-- [ ] The example sentence ("Welcome to our channel...") produces an audible WAV in `outputs/`.
-- [ ] Empty or whitespace-only text raises `EmptyTextError`.
-- [ ] Missing output directories are created, and existing files are never overwritten without `overwrite=True`.
-- [ ] Unit tests with a `MockEngine` (it produces a sine wave or silence) cover the above.
+- [x] The example sentence ("Welcome to our channel...") produces an audible WAV in `outputs/`.
+- [x] Empty or whitespace-only text raises `EmptyTextError`.
+- [x] Missing output directories are created, and existing files are never overwritten without `overwrite=True`.
+- [x] Unit tests with a `MockEngine` (it produces a sine wave or silence) cover the above.
+
+**Phase 3 notes (2026-10-15)**
+
+- `scripts/example.txt` → `outputs/phase3_example.wav`: 12.9 s of audio, RMS 0.051, 16-bit PCM
+  mono at 24 kHz. A second call auto-suffixed to `phase3_example_1.wav`. `TTS_DEVICE=cpu` also works.
+- Timing on CUDA: the first `generate()` took 11.4 s, almost all of it importing kokoro/misaki/spaCy
+  (model load itself is 0.9 s). The second call took 0.23 s (RTF 0.018). `generation_seconds`
+  currently includes that first-call load; Phase 5 can report load and synthesis separately.
+- The model is shared across one `KPipeline` per language code (`a` American, `b` British), chosen
+  from the first letter of the voice id. Non-English voice ids raise `UnsupportedVoiceError`.
+- Deferred to their phases: the voice catalog lists only `af_heart` (Phase 4); no voice or speed
+  validation (Phase 4); no chunking, so `chunk_count` is always 1 (Phase 5); only `.wav` output, and
+  any other extension raises `InvalidOptionError` (Phases 6 and 7); the CLI is unchanged (Phase 6).
+- Logging: `setup_logging(level)` configures the `tts_agent` logger with `key=value` messages and
+  filters the three Kokoro/torch load warnings. The library never configures logging on its own.
+- Tests: 45 mock tests in about 3 s, plus `pytest -m model` for real Kokoro (passes with `HF_HUB_OFFLINE=1`).
 
 ---
 
