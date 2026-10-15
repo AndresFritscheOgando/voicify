@@ -25,6 +25,7 @@ Related context:
 | 7 | Output extras: MP3 + SRT | Done (listening sync check passed 2026-10-15) |
 | 8 | Script controls | Done (2026-10-15) |
 | 9 | Testing hardening and documentation | Done (2026-10-15) |
+| 10 | Voice cloning (Chatterbox, optional extra) | Done (2026-10-15), pending a listening check with a real voice sample |
 
 Rules that apply to every phase:
 
@@ -633,12 +634,56 @@ result.failed_chunks, result.subtitle_path  # (Phase 7)
 
 ---
 
+## Phase 10: Voice cloning
+
+**Goal:** narrate in a voice cloned from a short clip, behind the existing `TTSEngine` interface,
+without making the default install heavier (decision D13).
+
+**Built:**
+- `engines/chatterbox_engine.py`: `ChatterboxEngine(voice_sample, device, exaggeration,
+  cfg_weight)`. It has one voice, `clone`. The sample is checked before any model loads (it must
+  exist, be `.wav/.flac/.mp3/.ogg`, be readable, and be at least 5 s long). The model loads lazily
+  from the HF cache, the sample is analysed once, and progress bars, prints and known warnings are
+  silenced. `--speed` is applied as a librosa time stretch.
+- `engines/common.py`: device selection and cache-first file lookup, now shared by Kokoro and
+  Chatterbox.
+- New optional `TTSEngine` hooks:
+  - `default_voice`: `"default"` resolves to `clone`.
+  - `supports_phonemes`: `/phoneme/` dictionary entries are skipped with a warning.
+  - `max_chunk_chars`: chunks are capped at 300 characters for Chatterbox.
+- Settings `TTS_VOICE_SAMPLE` / `TTS_EXAGGERATION` / `TTS_CFG_WEIGHT`, and CLI flags
+  `--voice-sample` / `--exaggeration` / `--cfg-weight`. Mixing `--voice` with a sample, or style
+  flags without one, is a usage error.
+- `pyproject.toml`: the `clone` extra, plus `[tool.uv] override-dependencies` for Chatterbox's old
+  pins. gradio (demo only) and pre-commit (listed as a runtime dependency by s3tokenizer) are
+  excluded. `setuptools<81` is pinned because the Perth watermarker imports `pkg_resources`.
+
+**Phase 10 notes (2026-10-15): measured on the RTX 5060**
+- **Clone fidelity:** the reference clip was a 12.8 s Kokoro `am_fenrir` recording. Chatterbox's
+  own speaker encoder rates the clone **0.953** similar to it. The real `am_fenrir` reading other
+  text scores 0.970, while `am_michael` and `af_heart` score 0.693 and 0.727.
+- **Long form:** `long_form_sample.txt` (15,474 chars, 75 chunks) became one 15.6-minute file in
+  545 s (RTF 0.58), with 0 failed chunks. Similarity across 10 slices from start to end was
+  0.961–0.970. The subtitle rate held between 13.2 and 19.8 chars/s across 276 cues, so no chunk
+  ran away or went silent. Kokoro's version of the same script is 16.2 minutes.
+- **Load:** 18–31 s per process with a warm cache. The first download is 3.2 GB.
+- **Offline:** generation with every socket connect blocked made 0 connection attempts.
+- **Resources:** peak VRAM was 3.8 GB allocated and 4.0 GB reserved. The extra adds 0.4 GB to the
+  environment.
+- **Lock side effect:** diffusers caps `huggingface-hub<2`, so the shared lock moved from 2.2.0 to
+  1.33.0. All Kokoro tests, including the no-network test, pass on it.
+- **Tests:** 440 mock tests and 11 `-m model` tests (including a real clone of a Kokoro voice), and
+  ruff is clean.
+- **Not verified:** a listening check with a real human voice sample, and CPU-only cloning speed.
+
+---
+
 ## Future improvements (out of scope for now)
 
 - Additional languages: Spanish, French, Italian, Portuguese, Hindi, Japanese, Mandarin
   (Kokoro supports them; some need espeak-ng or extra G2P packages).
 - Voice blending (weighted mixes of Kokoro voices).
-- A pluggable voice-cloning engine (e.g., Chatterbox) behind the same `TTSEngine` interface.
+- Word timings for cloned voices (forced alignment) and several voices per script (Phase 10 follow-ups).
 - Streaming output to disk for very long scripts, and resuming after a crash.
 - Batched or parallel chunk synthesis on the GPU.
 - Loudness normalization (EBU R128) for consistent levels across videos.

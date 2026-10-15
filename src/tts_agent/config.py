@@ -18,6 +18,10 @@ MIN_CHUNK_CHARS = 50
 MIN_SPEED = 0.5
 MAX_SPEED = 2.0
 DEFAULT_VOICE_ALIAS = "default"
+MIN_EXAGGERATION = 0.25
+MAX_EXAGGERATION = 2.0
+DEFAULT_EXAGGERATION = 0.5
+DEFAULT_CFG_WEIGHT = 0.5
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -40,6 +44,9 @@ class Settings:
     subtitles: bool = True
     normalize: bool = True
     log_level: str = "INFO"
+    voice_sample: Path | None = None
+    exaggeration: float = DEFAULT_EXAGGERATION
+    cfg_weight: float = DEFAULT_CFG_WEIGHT
 
     def __post_init__(self) -> None:
         if self.device not in DEVICES:
@@ -56,6 +63,8 @@ class Settings:
                 f"TTS_LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {self.log_level!r}"
             )
         validate_speed(self.default_speed, name="TTS_DEFAULT_SPEED")
+        validate_exaggeration(self.exaggeration, name="TTS_EXAGGERATION")
+        validate_cfg_weight(self.cfg_weight, name="TTS_CFG_WEIGHT")
         if self.max_chunk_chars < MIN_CHUNK_CHARS:
             raise InvalidOptionError(
                 f"TTS_MAX_CHUNK_CHARS must be at least {MIN_CHUNK_CHARS}, "
@@ -106,6 +115,12 @@ class Settings:
             kwargs["normalize"] = _parse_bool("TTS_NORMALIZE", v)
         if (v := get("TTS_LOG_LEVEL")) is not None:
             kwargs["log_level"] = v.upper()
+        if (v := get("TTS_VOICE_SAMPLE")) is not None:
+            kwargs["voice_sample"] = Path(v)
+        if (v := get("TTS_EXAGGERATION")) is not None:
+            kwargs["exaggeration"] = _parse_float("TTS_EXAGGERATION", v)
+        if (v := get("TTS_CFG_WEIGHT")) is not None:
+            kwargs["cfg_weight"] = _parse_float("TTS_CFG_WEIGHT", v)
         return cls(**kwargs)  # type: ignore[arg-type]
 
 
@@ -116,6 +131,24 @@ def validate_speed(speed: object, name: str = "speed") -> float:
     if not MIN_SPEED <= speed <= MAX_SPEED:  # also rejects NaN
         raise InvalidOptionError(f"{name} must be between {MIN_SPEED} and {MAX_SPEED}, got {speed}")
     return float(speed)
+
+
+def validate_exaggeration(value: object, name: str = "exaggeration") -> float:
+    """Return `value` as a float, or raise `InvalidOptionError` if it is outside 0.25-2.0."""
+    return _validate_range(value, name, MIN_EXAGGERATION, MAX_EXAGGERATION)
+
+
+def validate_cfg_weight(value: object, name: str = "cfg_weight") -> float:
+    """Return `value` as a float, or raise `InvalidOptionError` if it is outside 0-1."""
+    return _validate_range(value, name, 0.0, 1.0)
+
+
+def _validate_range(value: object, name: str, low: float, high: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise InvalidOptionError(f"{name} must be a number, got {value!r}")
+    if not low <= value <= high:  # also rejects NaN
+        raise InvalidOptionError(f"{name} must be between {low} and {high}, got {value}")
+    return float(value)
 
 
 def _parse_int(name: str, value: str) -> int:

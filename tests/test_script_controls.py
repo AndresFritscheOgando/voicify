@@ -253,6 +253,16 @@ def test_phonemes_in_slashes_use_misaki_inline_syntax(tmp_path):
     assert to_spoken("Say Kokoro now.", rules).text == "Say [Kokoro](/kˈOkəɹO/) now."
 
 
+def test_phoneme_entries_are_skipped_for_plain_text_engines(tmp_path, caplog):
+    path = write_dictionary(tmp_path, "Kokoro = /kˈOkəɹO/\nSQL = sequel\n")
+
+    with caplog.at_level("WARNING", logger="tts_agent"):
+        rules = load_pronunciations(path, allow_phonemes=False)
+
+    assert to_spoken("Kokoro and SQL.", rules).text == "Kokoro and sequel."
+    assert "pronunciation_phonemes_skipped" in caplog.text
+
+
 def test_multi_word_and_longest_entries_win(tmp_path):
     rules = load_pronunciations(
         write_dictionary(tmp_path, "Gull = Gul\nGull Point = Gull Pointe\n")

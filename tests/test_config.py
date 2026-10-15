@@ -17,6 +17,9 @@ def test_defaults_with_empty_environment():
     assert settings.output_dir == Path("outputs")
     assert settings.pronunciations is None
     assert settings.subtitles is True
+    assert settings.voice_sample is None
+    assert settings.exaggeration == 0.5
+    assert settings.cfg_weight == 0.5
 
 
 def test_values_are_read_and_parsed():
@@ -34,6 +37,9 @@ def test_values_are_read_and_parsed():
             "TTS_PRONUNCIATIONS": "pron.txt",
             "TTS_SUBTITLES": "false",
             "TTS_LOG_LEVEL": "debug",
+            "TTS_VOICE_SAMPLE": "samples/narrator.wav",
+            "TTS_EXAGGERATION": "0.8",
+            "TTS_CFG_WEIGHT": "0.3",
         }
     )
 
@@ -50,6 +56,9 @@ def test_values_are_read_and_parsed():
         pronunciations=Path("pron.txt"),
         subtitles=False,
         log_level="DEBUG",
+        voice_sample=Path("samples/narrator.wav"),
+        exaggeration=0.8,
+        cfg_weight=0.3,
     )
 
 
@@ -70,6 +79,11 @@ def test_blank_values_fall_back_to_defaults():
         {"TTS_DEFAULT_SPEED": "0.4"},
         {"TTS_DEFAULT_SPEED": "2.5"},
         {"TTS_SUBTITLES": "maybe"},
+        {"TTS_EXAGGERATION": "0.2"},
+        {"TTS_EXAGGERATION": "2.5"},
+        {"TTS_EXAGGERATION": "loud"},
+        {"TTS_CFG_WEIGHT": "-0.1"},
+        {"TTS_CFG_WEIGHT": "1.5"},
     ],
 )
 def test_invalid_values_raise(env):

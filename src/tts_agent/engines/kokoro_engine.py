@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +10,7 @@ import numpy as np
 
 from tts_agent.config import DEVICES
 from tts_agent.engines.base import TTSEngine, VoiceInfo, WordTiming
+from tts_agent.engines.common import hub_file, offline_hint, resolve_device
 from tts_agent.errors import (
     InvalidOptionError,
     ModelLoadError,
@@ -155,7 +155,7 @@ class KokoroEngine(TTSEngine):
                 pipeline.voices[voice] = torch.load(path, weights_only=True)
             except Exception as exc:
                 raise SynthesisError(
-                    f"Could not load Kokoro voice {voice!r}: {exc}{_offline_hint()}"
+                    f"Could not load Kokoro voice {voice!r}: {exc}{offline_hint()}"
                 ) from exc
         return pipeline
 
@@ -191,7 +191,7 @@ class KokoroEngine(TTSEngine):
             model = model.to(device).eval()
         except Exception as exc:
             raise ModelLoadError(
-                f"Failed to load the Kokoro model on {device}: {exc}{_offline_hint()}"
+                f"Failed to load the Kokoro model on {device}: {exc}{offline_hint()}"
             ) from exc
         self._model = model
         self._device = device
@@ -203,46 +203,12 @@ class KokoroEngine(TTSEngine):
         return model
 
     def _resolve_device(self) -> str:
-        import torch
-
-        cuda = torch.cuda.is_available()
-        if self._requested_device == "cuda":
-            if not cuda:
-                raise ModelLoadError(
-                    "TTS_DEVICE=cuda but CUDA is not available. Use auto or cpu, "
-                    "or install a CUDA build of PyTorch."
-                )
-            return "cuda"
-        if self._requested_device == "auto" and not cuda:
-            logger.warning("cuda_unavailable fallback=cpu")
-            return "cpu"
-        return "cuda" if self._requested_device == "auto" else "cpu"
+        return resolve_device(self._requested_device)
 
 
 def model_file(filename: str) -> str:
-    """Path to a file of the Kokoro repo: from the local Hugging Face cache when it is there,
-    otherwise downloaded once.
-
-    Kokoro would otherwise call `hf_hub_download` every time, which asks huggingface.co whether
-    the file changed (three requests per run) unless HF_HUB_OFFLINE=1 is set. Resolving cached
-    files ourselves means no network access at all once everything has been downloaded.
-    """
-    from huggingface_hub import hf_hub_download, try_to_load_from_cache
-
-    cached = try_to_load_from_cache(REPO_ID, filename)
-    if isinstance(cached, str):
-        return cached
-    logger.info("model_download repo=%s file=%s", REPO_ID, filename)
-    return hf_hub_download(REPO_ID, filename)
-
-
-def _offline_hint() -> str:
-    if os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return (
-            " (HF_HUB_OFFLINE is set but this file is not cached yet: unset HF_HUB_OFFLINE and"
-            " run once with a network connection to download it)"
-        )
-    return ""
+    """Path to a file of the Kokoro repo, from the local Hugging Face cache when it is there."""
+    return hub_file(REPO_ID, filename)
 
 
 def _to_numpy(audio: Any) -> np.ndarray:

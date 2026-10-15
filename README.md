@@ -16,8 +16,11 @@ use it from the command line or as a Python library.
 - **Script controls.** You can add exact `[pause 1.5s]` markers and keep a pronunciation dictionary,
   and common numbers and abbreviations Kokoro misreads (`Main St.`, `3:30 pm`, `5 km`, `1-10`) are
   fixed automatically.
-- **Commercial-friendly model.** Kokoro-82M and its voices are Apache-2.0 (see
-  [License and credits](#license-and-credits) for the libraries).
+- **Voice cloning (optional).** Give it a 10-second clip of someone speaking and it narrates in that
+  voice, using [Chatterbox](https://github.com/resemble-ai/chatterbox) (see
+  [Voice cloning](#voice-cloning)).
+- **Commercial-friendly models.** Kokoro-82M and its voices are Apache-2.0, and Chatterbox is MIT
+  (see [License and credits](#license-and-credits) for the libraries).
 
 ```bash
 uv sync
@@ -44,7 +47,7 @@ text or .txt script
 | `main.py` | `python main.py ...` entry point (the same CLI as `voicify`) |
 | `src/tts_agent/agent.py` | `TTSAgent`: validation, chunk loop, pauses, retries, output |
 | `src/tts_agent/cli.py` | The argparse command-line interface |
-| `src/tts_agent/engines/` | The `TTSEngine` interface, the Kokoro engine, and a mock engine for tests |
+| `src/tts_agent/engines/` | The `TTSEngine` interface, the Kokoro and Chatterbox (voice cloning) engines, and a mock engine for tests |
 | `src/tts_agent/processing/` | Text chunking, audio/MP3 writing, subtitles, pronunciations, normalization |
 | `docs/` | Requirements, design decisions, engine evaluation, environment, and the build log ([phases.md](docs/phases.md)) |
 
@@ -221,6 +224,9 @@ Generated: 15.0 s (58 chunks, plus 11.9 s loading)
 | `--no-srt` | Skip the `.srt` file |
 | `--keep-wav` | With MP3 output, also keep the WAV |
 | `--pronunciations PATH` | Pronunciation dictionary (see below) |
+| `--voice-sample PATH` | Speak in the voice of this clip with Chatterbox (see [Voice cloning](#voice-cloning)) |
+| `--exaggeration FLOAT` | Cloned voice only: 0.25–2.0, how expressive it is (default 0.5) |
+| `--cfg-weight FLOAT` | Cloned voice only: 0–1, lower is slower and more deliberate (default 0.5) |
 | `--device auto\|cuda\|cpu` | Overrides `TTS_DEVICE` |
 | `--verbose` / `--quiet` | Debug logging and tracebacks / warnings only |
 
@@ -274,6 +280,51 @@ correctly. These are added only where it was tested to fail:
 | `1-10` · `10–20` | "one-ten" · "ten twenty" | 1 to 10 · 10 to 20 |
 | `World War II` · `Henry VIII` | "I I" · "V I I I" | World War 2 · Henry the 8th |
 | `1/2 cup` · `5x faster` · `#1` | "one two" · "five ex" · "one" | one half · 5 times · number 1 |
+
+### Voice cloning
+
+Chatterbox (Resemble AI, MIT) can speak in any voice from a short clip. It is an optional extra
+because it is large:
+
+```bash
+uv sync --extra clone        # adds Chatterbox and its libraries (about 0.4 GB more)
+voicify --file scripts/example.txt --voice-sample samples/narrator.wav --output outputs/clone.mp3
+```
+
+The first run downloads the model (3.2 GB) into the Hugging Face cache. After that it loads in about
+18 s and works offline like Kokoro.
+
+**The sample.** 5 seconds minimum and about 10 seconds is ideal, because only the first 10 seconds
+are used. Use one speaker talking clearly, with no music, laughter or background noise. Formats:
+`.wav`, `.flac`, `.mp3` or `.ogg`. The clip affects quality more than any setting, so trim the best
+10 seconds rather than passing a long recording.
+
+**Style.**
+- `--exaggeration` 0.25–2.0 (default 0.5) makes the delivery more expressive. 0.7 and above suits
+  characters and comedy.
+- `--cfg-weight` 0–1 (default 0.5) sets how closely it follows the sample's pacing. With a high
+  exaggeration, lower it to about 0.3 to keep the speech from rushing.
+- Set either one permanently with `TTS_EXAGGERATION` / `TTS_CFG_WEIGHT`. Set `TTS_VOICE_SAMPLE` to
+  make the cloned voice the default.
+
+**Differences from Kokoro:**
+
+| | Kokoro | Chatterbox |
+|-|--------|------------|
+| Speed on an RTX 5060 | about 70× real time | about 1.7× real time (a 15.6-minute script took 9 minutes) |
+| Subtitles | timed from the model's word timings | timed by character count within each chunk (close, but less exact) |
+| `--speed` | native | applied afterwards as a time stretch (keeps the pitch; very slow or fast speeds sound processed) |
+| Chunk size | `TTS_MAX_CHUNK_CHARS` (400) | capped at 300 characters, since Chatterbox drifts on long inputs |
+| Pronunciation dictionary | respellings and `/phonemes/` | respellings only (phoneme entries are skipped with a warning) |
+| `--voice` | any voice in section 5 | not used: the sample is the voice |
+
+Every Chatterbox output carries Resemble AI's **Perth watermark**: an inaudible mark that identifies
+the audio as AI-generated, and is detectable even after MP3 compression.
+
+**Use voices you have the right to use:** your own, someone who agreed to it, or a voice actor you
+hired. In many places, cloning a real person's voice without permission and publishing it (above
+all for money or ads) can break right-of-publicity laws and platform rules on impersonation. That
+applies even to well-known voices from TV or films.
 
 ## 7. Python API examples
 
@@ -337,9 +388,24 @@ Errors: `EmptyTextError`, `InputFileError`, `UnsupportedVoiceError`, and `Invali
 input problems. `SynthesisError` (and its subclass `ModelLoadError`) and `OutputError` are runtime
 problems. All of them derive from `TTSError`.
 
+**A cloned voice** (needs `uv sync --extra clone`):
+
+```python
+from tts_agent import Settings, TTSAgent
+from tts_agent.engines.chatterbox_engine import ChatterboxEngine
+
+# Either through settings (TTS_VOICE_SAMPLE does the same) ...
+agent = TTSAgent(settings=Settings(voice_sample="samples/narrator.wav", exaggeration=0.7))
+# ... or with the engine directly
+agent = TTSAgent(engine=ChatterboxEngine("samples/narrator.wav", exaggeration=0.7, cfg_weight=0.3))
+
+agent.generate(file="scripts/example.txt", output_path="outputs/clone.mp3")  # voice: the clone
+```
+
 **Another engine.** `TTSAgent(engine=...)` accepts anything that implements
 `tts_agent.TTSEngine` (`name`, `sample_rate`, `list_voices()`, `synthesize()`, and optionally
-`synthesize_timed()` and `prepare()`). The tests use this to run without the model.
+`synthesize_timed()`, `prepare()`, `default_voice`, `supports_phonemes` and `max_chunk_chars`). The
+tests use this to run without the model.
 
 ## 8. CPU/GPU configuration
 
@@ -384,6 +450,9 @@ The device is chosen by `TTS_DEVICE` (or `--device`):
 | `TTS_NORMALIZE` | `true` | Number and abbreviation fixes |
 | `TTS_SUBTITLES` | `true` | Write the `.srt` |
 | `TTS_LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `TTS_VOICE_SAMPLE` | — | Voice clip to clone; when set, Chatterbox replaces Kokoro |
+| `TTS_EXAGGERATION` | `0.5` | Cloned voice expressiveness, 0.25–2.0 |
+| `TTS_CFG_WEIGHT` | `0.5` | Cloned voice pacing, 0–1 |
 | `HF_HOME` | HF default | Model cache folder |
 | `HF_HUB_OFFLINE` | — | `1` = never download, not even a voice used for the first time |
 
@@ -422,6 +491,19 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
   (checked with libsndfile/mpg123). Players that ignore the header add about 50–70 ms of silence,
   mostly at the start.
 
+**Voice cloning.**
+- `Voice cloning needs the optional Chatterbox dependencies` means you should run
+  `uv sync --extra clone`. A plain `uv sync` removes the extra again, so keep `--extra clone` on
+  later syncs.
+- `Voice sample ... needs at least 5 s`: use a longer clip. `Could not read voice sample`: convert
+  it to WAV (an `.m4a` from a phone is not supported).
+- **It sounds unlike the sample:** use a cleaner clip. Music, laughter, a second speaker or echo in
+  the first 10 seconds ends up in the voice.
+- **Odd words, mumbling or repeated phrases** come from Chatterbox's sampling, which varies from run
+  to run. Regenerate, lower `--exaggeration`, or split very long sentences.
+- **It needs about 4 GB of VRAM.** On smaller GPUs, use `--device cpu`, which is several times
+  slower.
+
 **Other.**
 - **The first run is slow:** about 10 s of one-time library import (PyTorch, spaCy), plus the
   download. The CLI shows this as "plus N s loading".
@@ -437,7 +519,8 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 
 - More languages (Kokoro also speaks Spanish, French, Italian, Portuguese, Hindi, Japanese, and Mandarin).
 - Voice blending, for example `af_heart:60,am_michael:40`.
-- A voice-cloning engine (for example Chatterbox) behind the same `TTSEngine` interface.
+- Word timings for cloned voices (forced alignment), so their subtitles are as exact as Kokoro's.
+- Several voices in one script (for example `[voice am_michael]` markers), for dialogue.
 - Exact sentence and paragraph pauses (trimming Kokoro's own edge silence, as `[pause]` already does).
 - Streaming audio to disk for very long scripts, and resuming after a crash.
 - Batched or parallel chunk synthesis on the GPU.
@@ -451,8 +534,8 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 ## Development
 
 ```bash
-uv run pytest                 # mock engine only: 403 tests, offline, about 5 s
-uv run pytest -m model        # 10 real-Kokoro integration tests (needs the cached model)
+uv run pytest                 # mock engine only: 440 tests, offline, about 10 s
+uv run pytest -m model        # 11 real-model integration tests (Kokoro, plus Chatterbox with the clone extra)
 uv run pytest -m "model or not model" --cov=tts_agent   # everything, with coverage (98%)
 uv run ruff check . && uv run ruff format --check src tests
 ```
@@ -472,6 +555,11 @@ Libraries with other licenses, installed as wheels and used unmodified:
 | [lameenc](https://github.com/chrisstaite/lameenc) (bundles LAME) | LGPL-3.0-or-later | MP3 encoding |
 | `espeakng-loader` (bundles [espeak-ng](https://github.com/espeak-ng/espeak-ng)) | GPL-3.0 (espeak-ng) | Pronouncing out-of-dictionary words |
 | PyTorch, NumPy, soundfile, spaCy | BSD / MIT | Inference, audio I/O, text analysis |
+
+With the `clone` extra, voice cloning uses [Chatterbox](https://github.com/resemble-ai/chatterbox)
+by Resemble AI: the code and model weights are MIT, and its outputs carry Resemble AI's Perth
+watermark (`resemble-perth`, MIT). It also brings in transformers, diffusers (Apache-2.0), librosa
+(ISC) and torchaudio (BSD).
 
 These licenses govern the software if you redistribute it. They are not a claim on the audio you
 generate. Check your own distribution plans if you ship Voicify inside another product.

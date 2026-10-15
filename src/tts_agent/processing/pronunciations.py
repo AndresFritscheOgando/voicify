@@ -29,8 +29,12 @@ _IGNORE_CASE_FLAG = "/i"
 _COMMENT = re.compile(r"(?:^|\s)#.*$")
 
 
-def load_pronunciations(path: str | Path) -> list[Rule]:
-    """Read a pronunciation dictionary. Raises `InputFileError` with the line number on errors."""
+def load_pronunciations(path: str | Path, *, allow_phonemes: bool = True) -> list[Rule]:
+    """Read a pronunciation dictionary. Raises `InputFileError` with the line number on errors.
+
+    With `allow_phonemes=False` (engines that read plain text only), `/phoneme/` entries are
+    skipped with a warning.
+    """
     path = Path(path)
     if not path.is_file():
         raise InputFileError(f"Pronunciation file not found: {path}")
@@ -56,6 +60,15 @@ def load_pronunciations(path: str | Path) -> list[Rule]:
             raise InputFileError(f"{path}:{number}: both the word and its pronunciation are needed")
         if value.startswith("/") and (not value.endswith("/") or len(value) < 3):
             raise InputFileError(f"{path}:{number}: phonemes must be written as /phonemes/")
+        if value.startswith("/") and not allow_phonemes:
+            logger.warning(
+                "pronunciation_phonemes_skipped file=%s line=%d word=%r "
+                "(this engine reads plain text; use a respelling instead)",
+                path,
+                number,
+                key,
+            )
+            continue
         if (key, ignore_case) in entries:
             logger.warning("pronunciation_duplicate file=%s line=%d word=%r", path, number, key)
         entries[(key, ignore_case)] = value

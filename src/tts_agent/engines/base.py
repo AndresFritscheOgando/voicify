@@ -59,5 +59,20 @@ class TTSEngine(ABC):
         """
         return self.synthesize(text, voice, speed), []
 
+    @property
+    def default_voice(self) -> str | None:
+        """The voice `"default"` means for this engine, or None to use `TTS_DEFAULT_VOICE`."""
+        return None
+
+    @property
+    def supports_phonemes(self) -> bool:
+        """Whether the engine reads misaki's `[word](/phonemes/)` syntax in its input."""
+        return True
+
+    @property
+    def max_chunk_chars(self) -> int | None:
+        """The longest chunk the engine handles well, or None for no limit beyond the settings."""
+        return None
+
     def prepare(self, voice: str) -> None:  # noqa: B027 - optional hook, a no-op by default
         """Load whatever `voice` needs before the first `synthesize` call. Optional."""

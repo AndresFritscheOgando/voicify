@@ -8,6 +8,7 @@ import dataclasses
 import logging
 import sys
 import traceback
+from pathlib import Path
 from typing import TextIO
 
 from tts_agent import __version__
@@ -39,7 +40,13 @@ examples:
   voicify --file scripts/example.txt --voice am_michael --speed 0.9
   voicify --file scripts/example.txt --format mp3 --keep-wav
   voicify --file script.txt --pronunciations pronunciations.txt
+  voicify --file script.txt --voice-sample samples/narrator.wav --exaggeration 0.7
   voicify --list-voices
+
+voice cloning (needs `uv sync --extra clone`):
+  --voice-sample speaks in the voice of a 5+ s clip of clean speech, using Chatterbox instead
+  of Kokoro. --exaggeration (0.25-2.0) makes it more expressive; --cfg-weight (0-1) lower
+  makes it slower and more deliberate. Subtitles are timed by character count.
 
 script controls:
   [pause] (1 s), [pause 1.5s] or [pause 800ms] anywhere in the text inserts an exact silence.
@@ -64,7 +71,8 @@ class _ArgumentParser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(
         prog="voicify",
-        description="Local text-to-speech for long-form narration, powered by Kokoro-82M.",
+        description="Local text-to-speech for long-form narration, powered by Kokoro-82M, "
+        "with optional voice cloning through Chatterbox.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -109,6 +117,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="pronunciation dictionary file, one 'word = respelling' per line "
         "(default: TTS_PRONUNCIATIONS)",
     )
+    parser.add_argument(
+        "--voice-sample",
+        metavar="PATH",
+        help="clone the voice in this audio clip (.wav/.flac/.mp3/.ogg, 5+ s of clean speech) "
+        "with Chatterbox (default: TTS_VOICE_SAMPLE)",
+    )
+    parser.add_argument(
+        "--exaggeration",
+        type=float,
+        metavar="FLOAT",
+        help="cloned voice expressiveness, 0.25-2.0 (default: TTS_EXAGGERATION, 0.5)",
+    )
+    parser.add_argument(
+        "--cfg-weight",
+        type=float,
+        metavar="FLOAT",
+        help="cloned voice pacing, 0-1; lower is slower (default: TTS_CFG_WEIGHT, 0.5)",
+    )
     parser.add_argument("--device", choices=DEVICES, help="override TTS_DEVICE")
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
@@ -135,15 +161,13 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
         return exc.code if isinstance(exc.code, int) else EXIT_USAGE_ERROR
 
     try:
-        settings = Settings.from_env()
-        if args.device:
-            settings = dataclasses.replace(settings, device=args.device)
+        settings = _apply_overrides(Settings.from_env(), args)
         level = "DEBUG" if args.verbose else "WARNING" if args.quiet else settings.log_level
         setup_logging(level)
         agent = TTSAgent(engine=engine, settings=settings)
 
         if args.list_voices:
-            _print_voices(agent.list_voices(), settings.default_voice, sys.stdout)
+            _print_voices(agent.list_voices(), agent.engine.default_voice, settings, sys.stdout)
             return EXIT_OK
 
         result = agent.generate(
@@ -170,7 +194,8 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
     if result.subtitle_path:
         print(f"Subtitles: {result.subtitle_path}")
     print(f"Duration:  {_format_duration(result.duration_seconds)}")
-    print(f"Voice:     {result.voice}")
+    sample = getattr(agent.engine, "voice_sample", None)
+    print(f"Voice:     {f'cloned from {sample.name}' if sample else result.voice}")
     chunks = f"{result.chunk_count} chunk{'s' if result.chunk_count != 1 else ''}"
     load = f", plus {result.load_seconds:.1f} s loading" if result.load_seconds >= 0.1 else ""
     print(f"Generated: {result.generation_seconds:.1f} s ({chunks}{load})")
@@ -185,6 +210,31 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
     return EXIT_OK
 
 
+def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
+    """Apply the command-line options that override settings, and check they fit together."""
+    overrides: dict[str, object] = {}
+    if args.device:
+        overrides["device"] = args.device
+    if args.voice_sample:
+        overrides["voice_sample"] = Path(args.voice_sample)
+    if args.exaggeration is not None:
+        overrides["exaggeration"] = args.exaggeration
+    if args.cfg_weight is not None:
+        overrides["cfg_weight"] = args.cfg_weight
+    settings = dataclasses.replace(settings, **overrides) if overrides else settings
+    if settings.voice_sample is None:
+        if args.exaggeration is not None or args.cfg_weight is not None:
+            raise InvalidOptionError(
+                "--exaggeration and --cfg-weight only apply to voice cloning; "
+                "add --voice-sample (or set TTS_VOICE_SAMPLE)"
+            )
+    elif args.voice.strip().lower() not in ("default", "clone"):
+        raise InvalidOptionError(
+            "--voice cannot be combined with voice cloning: the voice sample is the voice"
+        )
+    return settings
+
+
 def _report_error(exc: Exception, *, verbose: bool) -> int:
     if verbose:
         traceback.print_exception(exc, file=sys.stderr)
@@ -196,7 +246,10 @@ def _report_error(exc: Exception, *, verbose: bool) -> int:
     return EXIT_GENERATION_ERROR
 
 
-def _print_voices(voices: list[VoiceInfo], default_voice: str, out: TextIO) -> None:
+def _print_voices(
+    voices: list[VoiceInfo], engine_default: str | None, settings: Settings, out: TextIO
+) -> None:
+    default_voice = engine_default or settings.default_voice
     rows = [("ID", "NAME", "ACCENT", "GENDER", "QUALITY")]
     rows += [(v.id, v.name, v.accent, v.gender, v.description) for v in voices]
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
@@ -204,7 +257,8 @@ def _print_voices(voices: list[VoiceInfo], default_voice: str, out: TextIO) -> N
         marker = "*" if row[0] == default_voice else " "
         line = "  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True))
         print(f"{marker} {line}".rstrip(), file=out)
-    print(f"\n* default voice (TTS_DEFAULT_VOICE={default_voice})", file=out)
+    source = "" if engine_default else f" (TTS_DEFAULT_VOICE={default_voice})"
+    print(f"\n* default voice{source}", file=out)
 
 
 def _format_duration(seconds: float) -> str:

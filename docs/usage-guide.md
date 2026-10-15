@@ -114,6 +114,26 @@ uv run voicify --text "Hello, welcome to my channel." --output outputs/hello.wav
    narration, try `--speed 0.9`, or `--speed 0.85` for about 150 words per minute. Anything from
    0.5 to 2.0 works.
 
+4. **Or clone a voice** (optional). Instead of a built-in voice, Voicify can speak in the voice of
+   a short recording, such as your own voice or a voice actor you hired:
+   1. Install the extra (once, about 0.4 GB). Keep `--extra clone` on every later `uv sync`:
+      ```bash
+      uv sync --extra clone
+      ```
+   2. Record or cut a clip of **about 10 seconds**: one person talking clearly, with no music or
+      background noise. Save it as `.wav` (or `.flac`, `.mp3`, `.ogg`), for example
+      `samples/me.wav`.
+   3. Try it. The first run downloads the cloning model (3.2 GB):
+      ```bash
+      uv run voicify --text "Paste the first two sentences of your script here." --voice-sample samples/me.wav --output outputs/try_clone.wav
+      ```
+   4. For a livelier or more character-like delivery, add `--exaggeration 0.7 --cfg-weight 0.3`.
+      Values range from 0.25 to 2.0 for exaggeration and 0 to 1 for cfg-weight.
+
+   Cloned voices run at about 1.7× real time instead of about 70×, so a 15-minute script takes
+   about 9 minutes. Use `--voice-sample` in place of `--voice` in the steps below. Only clone
+   voices you have permission to use.
+
 ## Step 5: Generate the narration
 
 ```bash
@@ -258,6 +278,7 @@ Run it with `uv run python my_batch.py` from the project folder. The README desc
 | Choose the output name | `... --output outputs/name.wav` (or `.mp3`) |
 | Change voice / speed | `... --voice bf_emma --speed 0.9` |
 | See all voices | `uv run voicify --list-voices` |
+| Speak in a cloned voice | `... --voice-sample samples/me.wav` (after `uv sync --extra clone`) |
 | Fix pronunciations | `... --pronunciations scripts/my_words.txt` |
 | Replace an existing file | `... --overwrite` |
 | MP3 and keep a WAV | `... --format mp3 --keep-wav` |

@@ -16,6 +16,17 @@ dependencies = [
     "en-core-web-sm",
 ]
 
+[project.optional-dependencies]
+# Voice cloning with Chatterbox (`uv sync --extra clone`). Kept optional: it is large and pulls
+# in transformers, diffusers and librosa, none of which the Kokoro path needs.
+clone = [
+    "chatterbox-tts>=0.1.7",
+    "torchaudio>=2.9",
+    # resemble-perth (Chatterbox's audio watermark) imports pkg_resources without declaring it;
+    # setuptools 81 removed pkg_resources.
+    "setuptools<81",
+]
+
 [project.scripts]
 voicify = "tts_agent.cli:main"
 
@@ -37,7 +48,26 @@ packages = ["src/tts_agent"]
 # cu128 stops at torch 2.11, so the newer cu130 index is used. macOS gets the PyPI build.
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+torchaudio = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+
+# chatterbox-tts pins torch/torchaudio 2.6 (no Blackwell support), numpy<2 and exact versions of
+# several libraries on Python < 3.14. Its code runs on the newer versions (it allows them on 3.14),
+# so the pins are relaxed here. torchaudio stops at 2.11 but Chatterbox only uses its pure-Python
+# Resample and Kaldi fbank, which work with newer torch. gradio is only for its demo app, and
+# s3tokenizer lists pre-commit (a dev tool) as a runtime dependency.
+[tool.uv]
+override-dependencies = [
+    "torch>=2.9",
+    "torchaudio>=2.9",
+    "numpy>=1.26",
+    "transformers>=5.2",
+    "safetensors>=0.5.3",
+    "librosa>=0.11,<1",
+    "diffusers>=0.29",
+    "gradio; sys_platform == 'never'",
+    "pre-commit; sys_platform == 'never'",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

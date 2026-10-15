@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import soundfile as sf
 
@@ -167,6 +168,61 @@ def test_device_flag_overrides_settings(monkeypatch):
     assert seen["device"] == "cpu"
 
 
+def write_voice_sample(path: Path, seconds: float = 6.0) -> Path:
+    rate = 24_000
+    t = np.arange(int(seconds * rate), dtype=np.float32) / rate
+    sf.write(path, 0.3 * np.sin(2 * np.pi * 180 * t), rate)
+    return path
+
+
+def test_voice_sample_flags_override_settings(monkeypatch):
+    seen = {}
+
+    class SpyAgent(cli.TTSAgent):
+        def __init__(self, engine=None, settings=None):
+            seen["settings"] = settings
+            super().__init__(engine=MockEngine(), settings=settings)
+
+    monkeypatch.setattr(cli, "TTSAgent", SpyAgent)
+    monkeypatch.setenv("TTS_EXAGGERATION", "1.5")
+
+    argv = ["--list-voices", "--voice-sample", "me.wav", "--exaggeration", "0.7"]
+    assert main([*argv, "--cfg-weight", "0.2"]) == EXIT_OK
+    settings = seen["settings"]
+    assert (settings.voice_sample, settings.exaggeration, settings.cfg_weight) == (
+        Path("me.wav"),
+        0.7,
+        0.2,
+    )
+
+
+def test_list_voices_with_a_voice_sample_shows_the_clone(capsys):
+    write_voice_sample(Path("narrator.wav"))
+
+    assert main(["--list-voices", "--voice-sample", "narrator.wav"]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "* clone" in out
+    assert "Cloned from narrator.wav" in out
+    assert "TTS_DEFAULT_VOICE" not in out
+
+
+def test_generation_with_a_voice_sample_reports_the_clone(capsys):
+    from tts_agent.engines.chatterbox_engine import ChatterboxEngine
+
+    class FakeClone(ChatterboxEngine):
+        def prepare(self, voice):
+            pass
+
+        def synthesize(self, text, voice, speed=1.0):
+            return MockEngine().synthesize(text, "af_heart", speed)
+
+    engine = FakeClone(write_voice_sample(Path("narrator.wav")))
+
+    assert run(["--text", TEXT, "--voice-sample", "narrator.wav"], engine) == EXIT_OK
+    assert "Voice:     cloned from narrator.wav" in capsys.readouterr().out
+
+
 # --- logging ---------------------------------------------------------------------------------
 
 
@@ -209,6 +265,10 @@ def test_verbose_and_quiet_are_exclusive(capsys):
         (["--text", "hi", "--device", "tpu"], "invalid choice"),
         (["--file", "missing.txt"], "Input file not found"),
         (["--bogus"], "unrecognized arguments"),
+        (["--text", "hi", "--exaggeration", "0.7"], "add --voice-sample"),
+        (["--text", "hi", "--cfg-weight", "0.3"], "add --voice-sample"),
+        (["--text", "hi", "--voice-sample", "x.wav", "--voice", "am_adam"], "cannot be combined"),
+        (["--text", "hi", "--voice-sample", "x.wav", "--exaggeration", "5"], "between 0.25"),
     ],
 )
 def test_usage_errors(argv, message, capsys):

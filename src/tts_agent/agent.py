@@ -83,16 +83,30 @@ class GenerationResult:
 class TTSAgent:
     """Turns text into an audio file.
 
-    `engine` defaults to Kokoro on the device from `settings`; pass any `TTSEngine` to replace it.
+    `engine` defaults to Kokoro on the device from `settings`, or to Chatterbox speaking in a
+    cloned voice when `settings.voice_sample` is set; pass any `TTSEngine` to replace it.
     """
 
     def __init__(self, engine: TTSEngine | None = None, settings: Settings | None = None) -> None:
         self.settings = settings if settings is not None else Settings.from_env()
         if engine is None:
-            from tts_agent.engines.kokoro_engine import KokoroEngine
-
-            engine = KokoroEngine(device=self.settings.device)
+            engine = self._default_engine()
         self.engine = engine
+
+    def _default_engine(self) -> TTSEngine:
+        """Chatterbox when a voice sample is configured, otherwise Kokoro."""
+        if self.settings.voice_sample is not None:
+            from tts_agent.engines.chatterbox_engine import ChatterboxEngine
+
+            return ChatterboxEngine(
+                self.settings.voice_sample,
+                device=self.settings.device,
+                exaggeration=self.settings.exaggeration,
+                cfg_weight=self.settings.cfg_weight,
+            )
+        from tts_agent.engines.kokoro_engine import KokoroEngine
+
+        return KokoroEngine(device=self.settings.device)
 
     def list_voices(self) -> list[VoiceInfo]:
         return self.engine.list_voices()
@@ -150,7 +164,7 @@ class TTSAgent:
         subtitles = self.settings.subtitles if subtitles is None else subtitles
         companions = ([".srt"] if subtitles else []) + ([".wav"] if keep_wav else [])
         rules = self._spoken_rules(pronunciations)
-        chunks = chunk_text(text, self.settings.max_chunk_chars)
+        chunks = chunk_text(text, self._chunk_limit())
 
         logger.info(
             "generate_start engine=%s voice=%s speed=%s chars=%d chunks=%d",
@@ -202,10 +216,17 @@ class TTSAgent:
             wav_path=wav_path,
         )
 
+    def _chunk_limit(self) -> int:
+        """`TTS_MAX_CHUNK_CHARS`, capped at what the engine handles well."""
+        limit = self.settings.max_chunk_chars
+        engine_limit = self.engine.max_chunk_chars
+        return limit if engine_limit is None else min(limit, engine_limit)
+
     def _spoken_rules(self, pronunciations: str | Path | None) -> list[Rule]:
         """Pronunciation entries first (they win), then the normalization rules."""
         path = pronunciations if pronunciations is not None else self.settings.pronunciations
-        rules = load_pronunciations(path) if path else []
+        phonemes = self.engine.supports_phonemes
+        rules = load_pronunciations(path, allow_phonemes=phonemes) if path else []
         if self.settings.normalize:
             rules.extend(NORMALIZATION_RULES)
         return rules
@@ -221,10 +242,16 @@ class TTSAgent:
         return text
 
     def resolve_voice(self, voice: str | None = DEFAULT_VOICE_ALIAS) -> str:
-        """Map `"default"`/None to the configured default and check the id against the catalog."""
+        """Map `"default"`/None to the default voice and check the id against the catalog.
+
+        The default is the engine's own (the cloned voice for Chatterbox), else `TTS_DEFAULT_VOICE`.
+        """
         requested = (voice or DEFAULT_VOICE_ALIAS).strip().lower()
         from_default = requested == DEFAULT_VOICE_ALIAS
         if from_default:
+            engine_default = self.engine.default_voice
+            if engine_default is not None:
+                return engine_default
             requested = self.settings.default_voice.strip().lower()
         known = [v.id for v in self.engine.list_voices()]
         if requested in known:

@@ -10,7 +10,7 @@ decision, edit its entry and update [phases.md](phases.md).
 | D2 | Licensing / use | **Commercial use** (monetized YouTube) | Only permissively licensed models and voices. This rules out XTTS-v2 (CPML, non-commercial) and other non-commercial weights. Kokoro is Apache-2.0. |
 | D3 | Hardware | **NVIDIA GPU (CUDA)**, RTX 5060 8 GB | Install CUDA PyTorch with **cu128 or newer** (Blackwell needs it). Fall back to CPU automatically. See [environment.md](environment.md). |
 | D4 | Python | **3.12** | Pinned with `.python-version`. uv provisions it because the system Python is 3.14, which is too new for parts of the TTS stack. |
-| D5 | Voice cloning | **Not needed**; preset voices only | Kokoro alone. The `TTSEngine` interface still allows adding another engine later. |
+| D5 | Voice cloning | **Not needed**; preset voices only. *Revised by D13.* | Kokoro alone. The `TTSEngine` interface still allows adding another engine later. |
 | D6 | MP3 export | **pip-only encoder (`lameenc`)** | No system ffmpeg needed (it isn't installed on this machine). |
 | D7 | Existing output files | **Auto-suffix** (`narration_1.wav`, ...) | `--overwrite` / `overwrite=True` replaces instead. The final path is always reported. |
 | D8 | Project location | **Repo root `D:\Workflow\repos\voicify`** | Uses the spec's `src/tts_agent/` layout directly at the root, not nested in `local-tts-agent/`. |
@@ -18,6 +18,7 @@ decision, edit its entry and update [phases.md](phases.md).
 | D10 | Packaging | **uv** | `pyproject.toml` + `uv.lock`, with a PyTorch CUDA index configured in uv (`cu130`; see Phase 2 notes). |
 | D11 | Narration controls | **All four**: pause markers, pronunciation dictionary, number/abbreviation normalization, paragraph pauses | Built in Phase 8, after the MVP and long-form work. Normalization only covers gaps that misaki doesn't already handle. |
 | D12 | Subtitles | **SRT produced alongside audio** (on by default) | Sentence-level timings from the chunk timeline (Phase 7). `--no-srt` turns it off. |
+| D13 | Voice cloning (Phase 10) | **Chatterbox, as an optional `clone` extra** (zero-shot cloning from one clip) | MIT code and weights, so D2 still holds. XTTS-v2 and F5-TTS are non-commercial, and RVC voice conversion needs a trained model and old dependencies. `uv sync` without the extra stays Kokoro-only. Chatterbox's pins (torch 2.6, which has no Blackwell support, plus numpy<2 and exact versions of several libraries) are relaxed with `[tool.uv] override-dependencies`, and torchaudio 2.11 runs on torch 2.14 because Chatterbox only uses its pure-Python parts. Subtitles fall back to character-count timing because Chatterbox has no word timings. uv resolves extras together, and diffusers caps `huggingface-hub<2`, so the whole lock moved from huggingface-hub 2.2.0 to 1.33.0. Kokoro and the no-network test pass on it. |
 
 ## Defaults chosen without asking
 
