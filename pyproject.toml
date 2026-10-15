@@ -1,0 +1,60 @@
+[project]
+name = "voicify"
+version = "0.1.0"
+description = "Local text-to-speech agent for long-form narration, built on Kokoro-82M."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "kokoro>=0.9.4",
+    "torch>=2.9",
+    "soundfile>=0.12",
+    "numpy>=1.26",
+    "lameenc>=1.7",
+    "python-dotenv>=1.0",
+    # misaki (Kokoro's English G2P) needs this spaCy model. Without it, misaki tries to
+    # download it with pip at runtime, which fails in a uv venv and breaks offline use.
+    "en-core-web-sm",
+]
+
+[project.scripts]
+voicify = "tts_agent.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tts_agent"]
+
+# CUDA PyTorch on Windows/Linux. The RTX 5060 (Blackwell, sm_120) needs CUDA 12.8+ wheels;
+# cu128 stops at torch 2.11, so the newer cu130 index is used. macOS gets the PyPI build.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "model: needs the real Kokoro model (run with `pytest -m model`)",
+]
+addopts = "-m 'not model'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["scratch"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]

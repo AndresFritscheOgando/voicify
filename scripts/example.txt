@@ -1,0 +1,3 @@
+Welcome to our channel. Today we are going to explore how a small, local text-to-speech model can narrate an entire video script without sending a single word to the cloud.
+
+Let's get started.
