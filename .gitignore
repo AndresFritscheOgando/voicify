@@ -10,3 +10,4 @@ outputs/*
 !outputs/.gitkeep
 *.wav
 *.mp3
+samples/
