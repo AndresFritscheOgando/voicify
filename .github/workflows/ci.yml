@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      # The CUDA build of PyTorch is a 3 GB download that CI never uses: the default test run
+      # needs no model. Point the index at the CPU wheels instead, as the README describes.
+      - name: Use CPU-only PyTorch
+        run: |
+          sed -i 's|download.pytorch.org/whl/cu130|download.pytorch.org/whl/cpu|' pyproject.toml
+          grep -q 'whl/cpu' pyproject.toml
+          uv lock
+
+      - name: Install
+        run: uv sync
+
+      - name: Ruff
+        run: |
+          uv run ruff check .
+          uv run ruff format --check src tests
+
+      # Mock engine only (pyproject's addopts skip the `model` tests): offline, no downloads.
+      - name: Tests
+        run: uv run pytest
