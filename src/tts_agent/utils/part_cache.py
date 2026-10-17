@@ -8,6 +8,7 @@ output, `.<output name>.parts/`, and is removed once the audio has been written 
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -86,7 +87,8 @@ class PartCache:
             os.replace(temporary, path)
         except OSError as exc:
             logger.warning("part_not_saved path=%s error=%r", path, str(exc))
-            temporary.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):  # e.g. NotADirectoryError when the folder is a file
+                temporary.unlink(missing_ok=True)
             return
         self.saved += 1
 
