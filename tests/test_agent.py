@@ -399,13 +399,15 @@ def test_skipped_chunk_keeps_the_paragraph_pause(tmp_path):
     assert result.timeline[1].start - result.timeline[0].end == pytest.approx(PARAGRAPH_MS / 1000)
 
 
-def test_abort_policy_stops_and_writes_nothing(tmp_path):
+def test_abort_policy_stops_and_writes_no_audio(tmp_path):
     engine = FailingMockEngine(fail_on=("second",))
     agent = chunked_agent(engine, tmp_path, on_chunk_error="abort")
 
     with pytest.raises(SynthesisError, match="Chunk 2/3 failed"):
         agent.generate(THREE_CHUNKS)
-    assert not (tmp_path / "outputs").exists()
+    outputs = tmp_path / "outputs"
+    assert [p.name for p in outputs.iterdir()] == [".narration.wav.parts"]  # chunk 1, for resume
+    assert agent.kept_parts == outputs / ".narration.wav.parts"
     assert len(engine.calls) == 3  # chunk 1, then chunk 2 twice; chunk 3 never runs
 
 

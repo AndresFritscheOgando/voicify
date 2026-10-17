@@ -112,6 +112,13 @@ class ChatterboxEngine(TTSEngine):
     def max_chunk_chars(self) -> int:
         return MAX_CHUNK_CHARS
 
+    @property
+    def cache_key(self) -> str:
+        """The sample's path, size and modification time, plus the delivery settings."""
+        stat = self.voice_sample.stat()
+        sample = f"{self.voice_sample.resolve()}:{stat.st_size}:{stat.st_mtime_ns}"
+        return f"chatterbox:{sample}:{self.exaggeration}:{self.cfg_weight}"
+
     def list_voices(self) -> list[VoiceInfo]:
         return [
             VoiceInfo(

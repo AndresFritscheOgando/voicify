@@ -74,5 +74,11 @@ class TTSEngine(ABC):
         """The longest chunk the engine handles well, or None for no limit beyond the settings."""
         return None
 
+    @property
+    def cache_key(self) -> str:
+        """Identifies everything besides voice, speed and text that shapes the audio, so saved
+        chunks are only reused with the same engine settings. Defaults to `name`."""
+        return self.name
+
     def prepare(self, voice: str) -> None:  # noqa: B027 - optional hook, a no-op by default
         """Load whatever `voice` needs before the first `synthesize` call. Optional."""

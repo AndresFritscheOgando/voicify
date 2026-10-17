@@ -43,6 +43,7 @@ from tts_agent.processing.spoken import Rule, map_words, to_spoken
 from tts_agent.processing.subtitles import build_cues, write_srt
 from tts_agent.processing.text_processor import Chunk, chunk_text
 from tts_agent.utils.file_utils import read_text_file, resolve_output_path
+from tts_agent.utils.part_cache import PartCache, parts_dir_for
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class GenerationResult:
     timeline: list[ChunkTiming] = field(default_factory=list)
     load_seconds: float = 0.0  # engine/model loading before synthesis; 0 once loaded
     wav_path: Path | None = None  # the WAV kept next to an MP3 (keep_wav=True)
+    resumed_chunks: int = 0  # chunks reused from an earlier run's saved parts (resume=True)
 
 
 class TTSAgent:
@@ -92,6 +94,8 @@ class TTSAgent:
         if engine is None:
             engine = self._default_engine()
         self.engine = engine
+        # Set when the last `generate` kept its finished chunks on disk for `resume=True`.
+        self.kept_parts: Path | None = None
 
     def _default_engine(self) -> TTSEngine:
         """Chatterbox when a voice sample is configured, otherwise Kokoro."""
@@ -125,6 +129,7 @@ class TTSAgent:
         subtitles: bool | None = None,
         keep_wav: bool = False,
         pronunciations: str | Path | None = None,
+        resume: bool = False,
     ) -> GenerationResult:
         """Synthesize `text` (or the UTF-8 `.txt` script at `file`) and write an audio file.
 
@@ -149,6 +154,12 @@ class TTSAgent:
         A chunk that still fails after `TTS_CHUNK_RETRIES` retries is skipped and listed in
         `failed_chunks` (`on_chunk_error="skip"`), or stops the run (`"abort"`). If every chunk
         fails, `SynthesisError` is raised and no file is written.
+
+        Every finished chunk is saved in `.<output name>.parts/` next to the output while the job
+        runs. The folder is deleted once the audio is written with no failed chunks; otherwise it
+        stays (and `kept_parts` points at it), and `resume=True` on the next run with the same
+        output path reuses every saved chunk whose text, voice, speed and engine settings match,
+        synthesizing only the rest.
         """
         text = self._read_input(text, file)
         voice = self.resolve_voice(voice)
@@ -165,6 +176,8 @@ class TTSAgent:
         companions = ([".srt"] if subtitles else []) + ([".wav"] if keep_wav else [])
         rules = self._spoken_rules(pronunciations)
         chunks = chunk_text(text, self._chunk_limit())
+        parts = PartCache(parts_dir_for(target), self.engine.cache_key, self.engine.sample_rate)
+        self.kept_parts = None
 
         logger.info(
             "generate_start engine=%s voice=%s speed=%s chars=%d chunks=%d",
@@ -178,19 +191,29 @@ class TTSAgent:
         self.engine.prepare(voice)  # one-time model load, kept out of generation_seconds
         load_seconds = time.perf_counter() - loading
 
-        started = time.perf_counter()
-        audio, timeline, failed = self._synthesize_chunks(chunks, voice, speed, policy, rules)
-        generation_seconds = time.perf_counter() - started
+        try:
+            started = time.perf_counter()
+            audio, timeline, failed, resumed = self._synthesize_chunks(
+                chunks, voice, speed, policy, rules, parts, resume
+            )
+            generation_seconds = time.perf_counter() - started
 
-        rate = self.engine.sample_rate
-        path = resolve_output_path(target, overwrite, companions=companions)
-        write_audio(audio, rate, path, output_format)
-        wav_path = write_wav(audio, rate, path.with_suffix(".wav")) if keep_wav else None
-        duration = duration_seconds(audio, rate)
-        subtitle_path = None
-        if subtitles:
-            cues = build_cues(timeline, duration)
-            subtitle_path = write_srt(cues, path.with_suffix(".srt"))
+            rate = self.engine.sample_rate
+            path = resolve_output_path(target, overwrite, companions=companions)
+            write_audio(audio, rate, path, output_format)
+            wav_path = write_wav(audio, rate, path.with_suffix(".wav")) if keep_wav else None
+            duration = duration_seconds(audio, rate)
+            subtitle_path = None
+            if subtitles:
+                cues = build_cues(timeline, duration)
+                subtitle_path = write_srt(cues, path.with_suffix(".srt"))
+        except BaseException:  # also Ctrl+C: whatever finished stays saved for resume=True
+            self._keep_parts(parts, len(chunks))
+            raise
+        if failed:
+            self._keep_parts(parts, len(chunks))
+        else:
+            parts.clear()
         log = logger.warning if failed else logger.info
         log(
             "generate_done path=%s duration_s=%.2f generation_s=%.2f rtf=%.3f chunks=%d failed=%s",
@@ -214,7 +237,19 @@ class TTSAgent:
             timeline=timeline,
             load_seconds=load_seconds,
             wav_path=wav_path,
+            resumed_chunks=resumed,
         )
+
+    def _keep_parts(self, parts: PartCache, total: int) -> None:
+        saved = parts.count()
+        if saved:
+            self.kept_parts = parts.directory
+            logger.warning(
+                "parts_kept dir=%s chunks=%d/%d (rerun with resume=True / --resume to reuse them)",
+                parts.directory,
+                saved,
+                total,
+            )
 
     def _chunk_limit(self) -> int:
         """`TTS_MAX_CHUNK_CHARS`, capped at what the engine handles well."""
@@ -273,18 +308,23 @@ class TTSAgent:
         speed: float,
         policy: str,
         rules: Sequence[Rule],
-    ) -> tuple[np.ndarray, list[ChunkTiming], list[int]]:
+        parts: PartCache,
+        resume: bool,
+    ) -> tuple[np.ndarray, list[ChunkTiming], list[int], int]:
         """Synthesize every chunk in order and join them with pauses.
 
         Between chunks goes the sentence pause, or the paragraph pause after a paragraph break.
         A `[pause]` marker replaces either with an exact silence: the engine's own leading and
         trailing silence next to the marker is trimmed, so the audible gap is the requested one.
-        Segments are collected in a list and concatenated once at the end.
+        Segments are collected in a list and concatenated once at the end. Each synthesized chunk
+        is saved to `parts`; with `resume`, saved chunks are used instead of synthesizing them.
+        Returns the audio, the timeline, the failed chunk indices and how many were resumed.
         """
         rate = self.engine.sample_rate
         segments: list[np.ndarray] = []
         timeline: list[ChunkTiming] = []
         failed: list[int] = []
+        resumed = 0
         position = 0  # samples so far
         paragraph_break_pending = False
         marker_ms: int | None = chunks[0].pause_before_ms if chunks else None
@@ -294,7 +334,13 @@ class TTSAgent:
             spoken = to_spoken(chunk.text, rules)
             if spoken.edits:
                 logger.debug("spoken_text chunk=%d text=%r", chunk.index + 1, spoken.text)
-            synthesized = self._synthesize_with_retries(chunk, spoken.text, voice, speed, total)
+            synthesized = parts.load(spoken.text, voice, speed) if resume else None
+            if synthesized is not None:
+                resumed += 1
+            else:
+                synthesized = self._synthesize_with_retries(chunk, spoken.text, voice, speed, total)
+                if synthesized is not None:
+                    parts.save(spoken.text, voice, speed, *synthesized)
             if synthesized is None:
                 failed.append(chunk.index)
                 if policy == "abort":
@@ -352,7 +398,9 @@ class TTSAgent:
         if marker_ms is not None:  # a [pause] after the last spoken chunk
             position -= self._trim_tail(segments, timeline, rate)
             segments.append(silence(marker_ms, rate))
-        return concatenate(segments), timeline, failed
+        if resumed:
+            logger.info("parts_resumed chunks=%d/%d dir=%s", resumed, total, parts.directory)
+        return concatenate(segments), timeline, failed, resumed
 
     @staticmethod
     def _trim_tail(segments: list[np.ndarray], timeline: list[ChunkTiming], rate: int) -> int:

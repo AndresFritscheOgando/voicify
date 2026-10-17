@@ -41,6 +41,7 @@ examples:
   voicify --file scripts/example.txt --format mp3 --keep-wav
   voicify --file script.txt --pronunciations pronunciations.txt
   voicify --file script.txt --voice-sample samples/narrator.wav --exaggeration 0.7
+  voicify --file book.txt --output outputs/book.mp3 --resume   # continue a failed run
   voicify --list-voices
 
 voice cloning (needs `uv sync --extra clone`):
@@ -51,6 +52,11 @@ voice cloning (needs `uv sync --extra clone`):
 script controls:
   [pause] (1 s), [pause 1.5s] or [pause 800ms] anywhere in the text inserts an exact silence.
   Blank lines between paragraphs get a longer pause (TTS_PARAGRAPH_PAUSE_MS).
+
+resuming:
+  Finished chunks are saved in .<output name>.parts/ next to the output until the file is
+  written. If a run fails or is interrupted, repeat the same command with --resume to reuse
+  them and synthesize only the rest.
 
 exit codes:
   0 success, 1 generation error, 2 usage or validation error,
@@ -112,6 +118,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-wav", action="store_true", help="with --format mp3, also keep a WAV copy"
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="reuse the chunks a failed or interrupted run saved for the same --output",
+    )
+    parser.add_argument(
         "--pronunciations",
         metavar="PATH",
         help="pronunciation dictionary file, one 'word = respelling' per line "
@@ -160,6 +171,7 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
     except SystemExit as exc:  # --help, --version, and usage errors
         return exc.code if isinstance(exc.code, int) else EXIT_USAGE_ERROR
 
+    agent: TTSAgent | None = None
     try:
         settings = _apply_overrides(Settings.from_env(), args)
         level = "DEBUG" if args.verbose else "WARNING" if args.quiet else settings.log_level
@@ -181,12 +193,16 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
             subtitles=False if args.no_srt else None,
             keep_wav=args.keep_wav,
             pronunciations=args.pronunciations,
+            resume=args.resume,
         )
     except KeyboardInterrupt:
         print("error: interrupted", file=sys.stderr)
+        _print_resume_hint(agent)
         return EXIT_INTERRUPTED
     except Exception as exc:  # report every failure as one line, with a traceback if verbose
-        return _report_error(exc, verbose=args.verbose)
+        code = _report_error(exc, verbose=args.verbose)
+        _print_resume_hint(agent)
+        return code
 
     print(f"Saved:     {result.output_path}")
     if result.wav_path:
@@ -199,6 +215,8 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
     chunks = f"{result.chunk_count} chunk{'s' if result.chunk_count != 1 else ''}"
     load = f", plus {result.load_seconds:.1f} s loading" if result.load_seconds >= 0.1 else ""
     print(f"Generated: {result.generation_seconds:.1f} s ({chunks}{load})")
+    if result.resumed_chunks:
+        print(f"Resumed:   {result.resumed_chunks} of {result.chunk_count} chunks from saved parts")
     if result.failed_chunks:
         numbers = ", ".join(str(i + 1) for i in result.failed_chunks)
         print(
@@ -206,6 +224,7 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
             f"were skipped: {numbers}",
             file=sys.stderr,
         )
+        _print_resume_hint(agent, retry=True)
         return EXIT_PARTIAL
     return EXIT_OK
 
@@ -233,6 +252,18 @@ def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
             "--voice cannot be combined with voice cloning: the voice sample is the voice"
         )
     return settings
+
+
+def _print_resume_hint(agent: TTSAgent | None, *, retry: bool = False) -> None:
+    """Tell the user how to pick up where a run stopped, when it saved finished chunks."""
+    if agent is None or agent.kept_parts is None:
+        return
+    what = "retry only the failed chunks" if retry else "continue from where it stopped"
+    print(
+        f"note: finished chunks are saved in {agent.kept_parts}; "
+        f"repeat the same command with --resume to {what}",
+        file=sys.stderr,
+    )
 
 
 def _report_error(exc: Exception, *, verbose: bool) -> int:

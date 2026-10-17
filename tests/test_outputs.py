@@ -86,12 +86,13 @@ def test_keep_wav_requires_mp3(tmp_path):
         make_agent(tmp_path).generate(SCRIPT, keep_wav=True)
 
 
-def test_missing_lameenc_fails_clearly_and_writes_nothing(tmp_path, monkeypatch):
+def test_missing_lameenc_fails_clearly_and_writes_no_audio(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "lameenc", None)
 
     with pytest.raises(OutputError, match="lameenc"):
         make_agent(tmp_path).generate(SCRIPT, format="mp3")
-    assert list(tmp_path.iterdir()) == []
+    # Only the synthesized chunks remain, so a rerun with resume=True skips straight to writing.
+    assert [p.name for p in tmp_path.iterdir()] == [".narration.mp3.parts"]
 
 
 # --- subtitles -------------------------------------------------------------------------------

@@ -104,6 +104,10 @@ class KokoroEngine(TTSEngine):
         return SAMPLE_RATE
 
     @property
+    def cache_key(self) -> str:
+        return f"kokoro:{REPO_ID}"
+
+    @property
     def device(self) -> str | None:
         """The device in use, or None before the model has loaded."""
         return self._device

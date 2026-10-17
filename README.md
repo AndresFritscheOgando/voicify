@@ -223,6 +223,7 @@ Generated: 15.0 s (58 chunks, plus 11.9 s loading)
 | `--no-srt` | Skip the `.srt` file |
 | `--keep-wav` | With MP3 output, also keep the WAV |
 | `--pronunciations PATH` | Pronunciation dictionary (see below) |
+| `--resume` | Reuse the chunks a failed or interrupted run saved for the same `--output` (see [Resuming](#resuming-a-failed-run)) |
 | `--voice-sample PATH` | Speak in the voice of this clip with Chatterbox (see [Voice cloning](#voice-cloning)) |
 | `--exaggeration FLOAT` | Cloned voice only: 0.25–2.0, how expressive it is (default 0.5) |
 | `--cfg-weight FLOAT` | Cloned voice only: 0–1, lower is slower and more deliberate (default 0.5) |
@@ -232,6 +233,23 @@ Generated: 15.0 s (58 chunks, plus 11.9 s loading)
 **Exit codes:** `0` success · `1` generation error · `2` usage or validation error (bad option,
 empty text, missing file, unknown voice) · `3` partial success (some chunks failed and were
 skipped; the warning lists which) · `130` interrupted.
+
+### Resuming a failed run
+
+While a job runs, every finished chunk is saved in a hidden folder next to the output,
+`.<output name>.parts/` (for example `outputs/.book.mp3.parts/`). The folder is deleted as soon as
+the audio is written with every chunk in it. If the run fails, is interrupted with Ctrl+C, or
+skips chunks, the folder stays and Voicify says so. Repeat the same command with `--resume`:
+
+```bash
+voicify --file book.txt --output outputs/book.mp3 --resume
+```
+
+Saved chunks are reused only when their text, voice, speed and engine settings (for a cloned voice:
+the sample file, `--exaggeration` and `--cfg-weight`) all match, so you can fix a sentence in the
+script and only that sentence is synthesized again. Without `--resume`, every chunk is synthesized
+fresh, which is what you want for a new take of a cloned voice. Delete the folder to discard the
+saved chunks.
 
 ### Script controls
 
@@ -350,6 +368,7 @@ print(result.output_path, result.duration_seconds, result.subtitle_path)
 | `duration_seconds`, `sample_rate`, `format`, `voice` | About the audio |
 | `generation_seconds`, `load_seconds` | Synthesis time, and the one-time model load before it |
 | `chunk_count`, `failed_chunks` | How many chunks, and the 0-based indexes of any that were skipped |
+| `resumed_chunks` | Chunks reused from an earlier run's saved parts (`resume=True`) |
 | `subtitle_path`, `wav_path` | The `.srt` file and the kept WAV, if written |
 | `timeline` | One `ChunkTiming(index, text, start, end, words)` per spoken chunk, with word times in seconds |
 
@@ -370,6 +389,7 @@ result = agent.generate(
     subtitles=True,                            # outputs/episode.srt (default: TTS_SUBTITLES)
     pronunciations="scripts/pronunciations.example.txt",  # default: TTS_PRONUNCIATIONS
     on_chunk_error="abort",                    # "skip" (default) or "abort"
+    resume=True,                               # reuse chunks a failed run saved (agent.kept_parts)
 )
 if result.failed_chunks:
     print("skipped chunks:", result.failed_chunks)
@@ -512,7 +532,7 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
   its output elsewhere, set `PYTHONIOENCODING=utf-8`.
 - **Exit code 3:** some chunks failed after retrying and were skipped. The warning lists their
   numbers; rerun with `--verbose` to see the errors, or use `TTS_ON_CHUNK_ERROR=abort` to stop at
-  the first failure.
+  the first failure. Rerunning with `--resume` synthesizes only the skipped chunks.
 
 ## 10. Future improvements
 
@@ -533,7 +553,7 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 ## Development
 
 ```bash
-uv run pytest                 # mock engine only: 440 tests, offline, about 10 s
+uv run pytest                 # mock engine only: 465 tests, offline, about 10 s
 uv run pytest -m model        # 11 real-model integration tests (Kokoro, plus Chatterbox with the clone extra)
 uv run pytest -m "model or not model" --cov=tts_agent   # everything, with coverage (98%)
 uv run ruff check . && uv run ruff format --check src tests

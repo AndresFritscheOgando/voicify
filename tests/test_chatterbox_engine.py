@@ -87,6 +87,17 @@ def test_engine_reads_plain_text_in_short_chunks(sample):
     assert engine.max_chunk_chars == MAX_CHUNK_CHARS
 
 
+def test_cache_key_changes_with_the_sample_and_delivery(sample, tmp_path):
+    key = ChatterboxEngine(sample).cache_key
+
+    assert ChatterboxEngine(sample).cache_key == key
+    assert ChatterboxEngine(sample, exaggeration=0.8).cache_key != key
+    assert ChatterboxEngine(sample, cfg_weight=0.3).cache_key != key
+    assert ChatterboxEngine(write_sample(tmp_path / "other.wav")).cache_key != key
+    write_sample(sample, seconds=7.0)  # the same file, re-recorded
+    assert ChatterboxEngine(sample).cache_key != key
+
+
 def test_missing_sample_is_an_input_error(tmp_path):
     with pytest.raises(InputFileError, match="not found"):
         ChatterboxEngine(tmp_path / "nope.wav")
