@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from tts_agent import EmptyTextError, InputFileError, Settings, TTSAgent
+from tts_agent.config import MAX_PAUSE_MS
 from tts_agent.engines.base import WordTiming
 from tts_agent.engines.mock_engine import FailingMockEngine, MockEngine
 from tts_agent.processing.audio_processor import fade, leading_silence, trailing_silence
@@ -576,3 +577,28 @@ def test_inline_comments_are_ignored(tmp_path):
     assert to_spoken("NGINX, Kokoro and C#.", rules).text == (
         "engine x, [Kokoro](/kˈOkəɹO/) and C sharp."
     )
+
+
+# --- pause limits ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("marker", ["[pause 1500s]", "[pause 3600s]", "[pause 90000ms]"])
+def test_overlong_pause_is_capped_with_a_warning(marker, caplog):
+    with caplog.at_level(logging.WARNING, logger="tts_agent"):
+        assert parse_pause(marker) == MAX_PAUSE_MS
+
+    assert "pause_capped" in caplog.text
+
+
+def test_pause_at_the_limit_is_not_capped(caplog):
+    with caplog.at_level(logging.WARNING, logger="tts_agent"):
+        assert parse_pause("[pause 60s]") == MAX_PAUSE_MS
+
+    assert "pause_capped" not in caplog.text
+
+
+def test_capped_pause_is_what_the_audio_gets(tmp_path):
+    result = make_agent(tmp_path).generate("Before the pause. [pause 1500s] After the pause.")
+
+    first, second = result.timeline
+    assert second.start - first.end == pytest.approx(MAX_PAUSE_MS / 1000, abs=0.01)

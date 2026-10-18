@@ -241,6 +241,8 @@ class TTSAgent:
             if subtitles:
                 cues = build_cues(timeline, duration)
                 subtitle_path = write_srt(cues, path.with_suffix(".srt"))
+            elif overwrite:
+                self._remove_stale_subtitles(path.with_suffix(".srt"))
         except BaseException:  # also Ctrl+C: whatever finished stays saved for resume=True
             self._keep_parts(parts, len(chunks))
             raise
@@ -288,6 +290,18 @@ class TTSAgent:
         if seed is None:
             return secrets.randbelow(MAX_SEED + 1)
         return validate_seed(seed)
+
+    @staticmethod
+    def _remove_stale_subtitles(srt: Path) -> None:
+        """Overwriting without subtitles: an old `.srt` would no longer match the new audio."""
+        if not srt.is_file():
+            return
+        try:
+            srt.unlink()
+        except OSError as exc:
+            logger.warning("stale_subtitles_not_removed path=%s error=%r", srt, str(exc))
+            return
+        logger.info("stale_subtitles_removed path=%s", srt)
 
     def _keep_parts(self, parts: PartCache, total: int) -> None:
         saved = parts.count()

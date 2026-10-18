@@ -31,5 +31,9 @@ class ModelLoadError(SynthesisError):
     """The engine's model could not be loaded. Never retried per chunk."""
 
 
+class ChunkingError(TTSError):
+    """Splitting the text into chunks lost, duplicated or reordered text. Always a bug."""
+
+
 class OutputError(TTSError):
     """The output file could not be created or written."""

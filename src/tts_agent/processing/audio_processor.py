@@ -10,6 +10,7 @@ import numpy as np
 import soundfile as sf
 
 from tts_agent.errors import OutputError
+from tts_agent.utils.file_utils import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ def write_wav(audio: np.ndarray, sample_rate: int, path: Path) -> Path:
         raise OutputError("Refusing to write an empty WAV file")
     path = Path(path)
     try:
-        sf.write(path, np.clip(samples, -1.0, 1.0), sample_rate, subtype="PCM_16", format="WAV")
+        clipped = np.clip(samples, -1.0, 1.0)
+        atomic_write(
+            path, lambda tmp: sf.write(tmp, clipped, sample_rate, subtype="PCM_16", format="WAV")
+        )
     except (OSError, RuntimeError) as exc:
         raise OutputError(f"Could not write WAV file {path}: {exc}") from exc
     return path
@@ -57,7 +61,7 @@ def write_mp3(audio: np.ndarray, sample_rate: int, path: Path) -> Path:
     path = Path(path)
     data = encode_mp3(audio, sample_rate)
     try:
-        path.write_bytes(data)
+        atomic_write(path, lambda tmp: tmp.write_bytes(data))
     except OSError as exc:
         raise OutputError(f"Could not write MP3 file {path}: {exc}") from exc
     return path

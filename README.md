@@ -219,12 +219,13 @@ Generated: 15.0 s (58 chunks, plus 11.9 s loading)
 | `--speed FLOAT` | 0.5–2.0. At 1.0 it reads about 177 words per minute; 0.85 gives about 150 |
 | `--output PATH` | Output file. Missing folders are created |
 | `--format wav\|mp3` | Defaults to the `--output` extension, then `wav`. Both must agree if both are given |
-| `--overwrite` | Replace existing files. Without it, `name.wav` becomes `name_1.wav`, `name_2.wav`, ... |
+| `--overwrite` | Replace existing files. Without it, `name.wav` becomes `name_1.wav`, `name_2.wav`, ... With `--no-srt`, an old `name.srt` is removed so it cannot mismatch the new audio. A replaced file is only swapped in once the new one is fully written |
 | `--no-srt` | Skip the `.srt` file |
 | `--keep-wav` | With MP3 output, also keep the WAV |
 | `--pronunciations PATH` | Pronunciation dictionary (see below) |
 | `--resume` | Reuse the chunks a failed or interrupted run saved for the same `--output` (see [Resuming](#resuming-a-failed-run)) |
 | `--voice-sample PATH` | Speak in the voice of this clip with Chatterbox (see [Voice cloning](#voice-cloning)) |
+| `--no-clone` | Use a regular voice even when `TTS_VOICE_SAMPLE` is set |
 | `--exaggeration FLOAT` | Cloned voice only: 0.25–2.0, how expressive it is (default 0.5) |
 | `--cfg-weight FLOAT` | Cloned voice only: 0–1, lower is slower and more deliberate (default 0.5) |
 | `--seed INT` | Cloned voice only: repeat the takes of an earlier run (default `TTS_SEED`, else random) |
@@ -265,6 +266,8 @@ A blank line starts a new paragraph, which gets a longer pause. [pause 800ms] Sh
 - `[pause]` = 1 s. `[pause 1.5s]` and `[pause 800ms]` are exact: the voice's own edge silence is
   trimmed, so the silence you hear is the length you asked for (measured within 30 ms).
 - Malformed markers such as `[pause 2]` log a warning and use 1 s. Markers never appear in subtitles.
+- A single pause is at most 60 s: a longer one (often a typo, `[pause 1500s]` for `1500ms`) is
+  shortened to 60 s with a warning.
 - Without markers, chunks are separated by `TTS_SENTENCE_PAUSE_MS` (250 ms) and paragraphs by
   `TTS_PARAGRAPH_PAUSE_MS` (700 ms). Both add to Kokoro's natural pauses, so a paragraph break
   sounds like about 1.5 s.
@@ -323,7 +326,7 @@ are used. Use one speaker talking clearly, with no music, laughter or background
 - `--cfg-weight` 0–1 (default 0.5) sets how closely it follows the sample's pacing. With a high
   exaggeration, lower it to about 0.3 to keep the speech from rushing.
 - Set either one permanently with `TTS_EXAGGERATION` / `TTS_CFG_WEIGHT`. Set `TTS_VOICE_SAMPLE` to
-  make the cloned voice the default.
+  make the cloned voice the default, and `--no-clone` to use a regular voice for one run.
 
 **Differences from Kokoro:**
 
@@ -486,8 +489,8 @@ The device is chosen by `TTS_DEVICE` (or `--device`):
 | `TTS_DEFAULT_SPEED` | `1.0` | 0.5–2.0 |
 | `TTS_OUTPUT_DIR` | `outputs` | Folder used when no output path is given |
 | `TTS_MAX_CHUNK_CHARS` | `400` | Largest chunk sent to the model (at least 50) |
-| `TTS_SENTENCE_PAUSE_MS` | `250` | Silence added between chunks |
-| `TTS_PARAGRAPH_PAUSE_MS` | `700` | Silence added at paragraph breaks |
+| `TTS_SENTENCE_PAUSE_MS` | `250` | Silence added between chunks (0–60000) |
+| `TTS_PARAGRAPH_PAUSE_MS` | `700` | Silence added at paragraph breaks (0–60000) |
 | `TTS_CHUNK_RETRIES` | `1` | Retries before a chunk counts as failed |
 | `TTS_ON_CHUNK_ERROR` | `skip` | `skip` (continue, exit code 3) or `abort` |
 | `TTS_PRONUNCIATIONS` | — | Pronunciation dictionary path |
@@ -580,7 +583,7 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 ## Development
 
 ```bash
-uv run pytest                 # mock engine only: 510 tests, offline, about 10 s
+uv run pytest                 # mock engine only: 532 tests, offline, about 10 s
 uv run pytest -m model        # 11 real-model integration tests (Kokoro, plus Chatterbox with the clone extra)
 uv run pytest -m "model or not model" --cov=tts_agent   # everything, with coverage (98%)
 uv run ruff check . && uv run ruff format --check src tests

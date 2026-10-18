@@ -487,3 +487,69 @@ def test_help_explains_pause_markers(capsys):
     main(["--help"])
     out = capsys.readouterr().out
     assert "[pause 1.5s]" in out and "--pronunciations" in out
+
+
+# --- --no-clone ------------------------------------------------------------------------------
+
+
+def test_no_clone_turns_off_a_voice_sample_from_the_environment(monkeypatch, capsys):
+    write_voice_sample(Path("narrator.wav"))
+    monkeypatch.setenv("TTS_VOICE_SAMPLE", "narrator.wav")
+    engine = MockEngine()
+
+    code = run(["--text", TEXT, "--voice", "am_michael", "--no-clone"], engine)
+
+    assert code == EXIT_OK
+    assert engine.calls[0][1] == "am_michael"
+    assert "Voice:     am_michael" in capsys.readouterr().out
+
+
+def test_no_clone_selects_kokoro_as_the_default_engine(monkeypatch):
+    seen = {}
+
+    class SpyAgent(cli.TTSAgent):
+        def __init__(self, engine=None, settings=None):
+            seen["settings"] = settings
+            super().__init__(engine=MockEngine(), settings=settings)
+
+    monkeypatch.setattr(cli, "TTSAgent", SpyAgent)
+    monkeypatch.setenv("TTS_VOICE_SAMPLE", "narrator.wav")
+
+    assert main(["--list-voices", "--no-clone"]) == EXIT_OK
+    assert seen["settings"].voice_sample is None
+
+
+def test_voice_with_an_environment_sample_suggests_no_clone(monkeypatch, capsys):
+    write_voice_sample(Path("narrator.wav"))
+    monkeypatch.setenv("TTS_VOICE_SAMPLE", "narrator.wav")
+
+    assert run(["--text", TEXT, "--voice", "am_michael"]) == EXIT_USAGE_ERROR
+    assert "--no-clone" in single_error_line(capsys.readouterr().err)
+
+
+def test_no_clone_and_voice_sample_are_exclusive(capsys):
+    assert main(["--text", TEXT, "--no-clone", "--voice-sample", "x.wav"]) == EXIT_USAGE_ERROR
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_no_clone_rejects_clone_only_options(capsys):
+    assert run(["--text", TEXT, "--no-clone", "--exaggeration", "0.7"]) == EXIT_USAGE_ERROR
+    assert "only apply to voice cloning" in single_error_line(capsys.readouterr().err)
+
+
+# --- internal errors -------------------------------------------------------------------------
+
+
+def test_chunking_bug_is_reported_as_one_clear_line(monkeypatch, capsys):
+    from tts_agent import agent as agent_module
+    from tts_agent.errors import ChunkingError
+
+    def broken_chunking(text, max_chars):
+        raise ChunkingError("Splitting the text lost some of it. This is a bug in Voicify.")
+
+    monkeypatch.setattr(agent_module, "chunk_text", broken_chunking)
+
+    assert run(["--text", TEXT]) == EXIT_GENERATION_ERROR
+    line = single_error_line(capsys.readouterr().err)
+    assert "bug in Voicify" in line
+    assert "unexpected" not in line

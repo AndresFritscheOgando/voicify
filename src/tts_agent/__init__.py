@@ -4,6 +4,7 @@ from tts_agent.agent import ChunkTiming, GenerationResult, TTSAgent
 from tts_agent.config import Settings
 from tts_agent.engines.base import TTSEngine, VoiceInfo
 from tts_agent.errors import (
+    ChunkingError,
     EmptyTextError,
     InputFileError,
     InvalidOptionError,
@@ -19,6 +20,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "ChunkTiming",
+    "ChunkingError",
     "EmptyTextError",
     "GenerationResult",
     "InputFileError",

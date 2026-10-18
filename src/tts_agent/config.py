@@ -23,6 +23,7 @@ MAX_EXAGGERATION = 2.0
 DEFAULT_EXAGGERATION = 0.5
 DEFAULT_CFG_WEIGHT = 0.5
 MAX_SEED = 2**32 - 1
+MAX_PAUSE_MS = 60_000  # longest [pause] or configured pause; a typo like "1500s" stays sane
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -69,6 +70,14 @@ class Settings:
         validate_cfg_weight(self.cfg_weight, name="TTS_CFG_WEIGHT")
         if self.seed is not None:
             validate_seed(self.seed, name="TTS_SEED")
+        for name, value in (
+            ("TTS_SENTENCE_PAUSE_MS", self.sentence_pause_ms),
+            ("TTS_PARAGRAPH_PAUSE_MS", self.paragraph_pause_ms),
+        ):
+            if not 0 <= value <= MAX_PAUSE_MS:
+                raise InvalidOptionError(
+                    f"{name} must be between 0 and {MAX_PAUSE_MS} ms, got {value}"
+                )
         if self.max_chunk_chars < MIN_CHUNK_CHARS:
             raise InvalidOptionError(
                 f"TTS_MAX_CHUNK_CHARS must be at least {MIN_CHUNK_CHARS}, "

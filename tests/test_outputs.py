@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -218,3 +220,110 @@ def test_timeline_words_use_the_output_clock(tmp_path):
     starts = [w.start for t in result.timeline for w in t.words]
     assert starts == sorted(starts)
     assert np.isclose(result.timeline[-1].end, result.duration_seconds)
+
+
+# --- overwriting -----------------------------------------------------------------------------
+
+
+def test_overwrite_without_subtitles_removes_the_old_srt(tmp_path):
+    agent = make_agent(tmp_path)
+    first = agent.generate(SCRIPT)
+    assert first.subtitle_path.exists()
+
+    second = agent.generate("A different, shorter take.", overwrite=True, subtitles=False)
+
+    assert second.output_path == first.output_path
+    assert not (tmp_path / "narration.srt").exists()
+
+
+def test_new_file_without_subtitles_leaves_other_srt_files_alone(tmp_path):
+    agent = make_agent(tmp_path)
+    agent.generate(SCRIPT)
+
+    result = agent.generate("A new take.", subtitles=False)  # no overwrite: becomes narration_1
+
+    assert result.output_path.name == "narration_1.wav"
+    assert (tmp_path / "narration.srt").exists()
+
+
+def test_overwrite_with_subtitles_replaces_the_srt(tmp_path):
+    agent = make_agent(tmp_path)
+    agent.generate(SCRIPT)
+
+    result = agent.generate("A different, shorter take.", overwrite=True)
+
+    assert "different, shorter take" in result.subtitle_path.read_text(encoding="utf-8")
+
+
+def test_stale_srt_that_cannot_be_removed_only_warns(tmp_path, monkeypatch, caplog):
+    agent = make_agent(tmp_path)
+    agent.generate(SCRIPT)
+    original_unlink = type(tmp_path).unlink
+
+    def refuse_srt(self, *args, **kwargs):
+        if self.suffix == ".srt":
+            raise PermissionError("in use")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(tmp_path), "unlink", refuse_srt)
+    with caplog.at_level("WARNING", logger="tts_agent"):
+        result = agent.generate("Another take.", overwrite=True, subtitles=False)
+
+    assert result.output_path.exists()
+    assert "stale_subtitles_not_removed" in caplog.text
+
+
+# --- atomic writes ---------------------------------------------------------------------------
+
+
+def leftovers(folder) -> list[str]:
+    return sorted(p.name for p in folder.iterdir() if p.name.endswith(".tmp"))
+
+
+@pytest.mark.parametrize("fmt", ["wav", "mp3"])
+def test_failed_overwrite_keeps_the_previous_audio(tmp_path, monkeypatch, fmt):
+    agent = make_agent(tmp_path)
+    first = agent.generate(SCRIPT, format=fmt, subtitles=False)
+    before = first.output_path.read_bytes()
+
+    def crash(source, target):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", crash)
+    with pytest.raises(OutputError, match="No space left"):
+        agent.generate("A replacement take.", format=fmt, overwrite=True, subtitles=False)
+
+    assert first.output_path.read_bytes() == before
+    assert leftovers(tmp_path) == []
+
+
+def test_interrupted_wav_write_leaves_no_partial_file(tmp_path, monkeypatch):
+    def interrupted(path, *args, **kwargs):
+        Path(path).write_bytes(b"RIFF partial")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sf, "write", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        make_agent(tmp_path).generate(SCRIPT, subtitles=False)
+
+    assert not (tmp_path / "narration.wav").exists()
+    assert leftovers(tmp_path) == []
+
+
+def test_failed_srt_write_keeps_the_previous_subtitles(tmp_path, monkeypatch):
+    agent = make_agent(tmp_path)
+    first = agent.generate(SCRIPT)
+    before = first.subtitle_path.read_text(encoding="utf-8")
+    original_replace = os.replace
+
+    def crash_on_srt(source, target):
+        if str(target).endswith(".srt"):
+            raise OSError(13, "Permission denied")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", crash_on_srt)
+    with pytest.raises(OutputError, match="subtitle"):
+        agent.generate("A replacement take.", overwrite=True)
+
+    assert first.subtitle_path.read_text(encoding="utf-8") == before
+    assert leftovers(tmp_path) == []

@@ -12,6 +12,7 @@ from typing import Protocol
 from tts_agent.engines.base import WordTiming
 from tts_agent.errors import OutputError
 from tts_agent.processing.text_processor import split_sentences
+from tts_agent.utils.file_utils import atomic_write
 
 MAX_LINE_CHARS = 42
 MAX_LINES = 2
@@ -99,7 +100,8 @@ def format_srt(cues: Sequence[Cue]) -> str:
 def write_srt(cues: Sequence[Cue], path: Path) -> Path:
     path = Path(path)
     try:
-        path.write_text(format_srt(cues), encoding="utf-8", newline="\n")
+        text = format_srt(cues)
+        atomic_write(path, lambda tmp: tmp.write_text(text, encoding="utf-8", newline="\n"))
     except OSError as exc:
         raise OutputError(f"Could not write subtitle file {path}: {exc}") from exc
     return path

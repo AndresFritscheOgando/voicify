@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import contextlib
+import os
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from tts_agent.errors import EmptyTextError, InputFileError, OutputError
@@ -32,6 +34,23 @@ def read_text_file(path: str | Path) -> str:
     if not text.strip():
         raise EmptyTextError(f"Input file {path} is empty")
     return text
+
+
+def atomic_write(path: Path, write: Callable[[Path], object]) -> None:
+    """Call `write` on a temporary file next to `path`, then rename it over `path`.
+
+    A write that fails or is interrupted leaves an existing file at `path` untouched, and never
+    leaves a half-written one behind.
+    """
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.tmp")
+    try:
+        write(temporary)
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            temporary.unlink(missing_ok=True)
+        raise
 
 
 def resolve_output_path(

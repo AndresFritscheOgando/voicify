@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from tts_agent.errors import EmptyTextError, InvalidOptionError
+from tts_agent.errors import ChunkingError, EmptyTextError, InvalidOptionError
 from tts_agent.processing.text_processor import (
     Chunk,
     check_integrity,
@@ -226,10 +226,10 @@ def test_oversized_sentence_stays_within_limit_next_to_short_ones():
 
 
 def test_integrity_check_detects_missing_text():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ChunkingError, match="bug"):
         check_integrity("One. Two.", [Chunk(0, "One.", 0, True)])
 
 
 def test_integrity_check_detects_duplicates():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ChunkingError):
         check_integrity("One.", [Chunk(0, "One.", 0, False), Chunk(1, "One.", 0, True)])

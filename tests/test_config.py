@@ -89,3 +89,16 @@ def test_blank_values_fall_back_to_defaults():
 def test_invalid_values_raise(env):
     with pytest.raises(InvalidOptionError):
         Settings.from_env(env)
+
+
+@pytest.mark.parametrize("name", ["TTS_SENTENCE_PAUSE_MS", "TTS_PARAGRAPH_PAUSE_MS"])
+def test_configured_pauses_have_a_ceiling(name):
+    assert Settings.from_env({name: "60000"})  # one minute is allowed
+
+    with pytest.raises(InvalidOptionError, match=name):
+        Settings.from_env({name: "60001"})
+
+
+def test_pause_fields_are_checked_in_code_too():
+    with pytest.raises(InvalidOptionError, match="TTS_PARAGRAPH_PAUSE_MS"):
+        Settings(paragraph_pause_ms=-5)

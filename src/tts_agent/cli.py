@@ -130,11 +130,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="pronunciation dictionary file, one 'word = respelling' per line "
         "(default: TTS_PRONUNCIATIONS)",
     )
-    parser.add_argument(
+    cloning = parser.add_mutually_exclusive_group()
+    cloning.add_argument(
         "--voice-sample",
         metavar="PATH",
         help="clone the voice in this audio clip (.wav/.flac/.mp3/.ogg, 5+ s of clean speech) "
         "with Chatterbox (default: TTS_VOICE_SAMPLE)",
+    )
+    cloning.add_argument(
+        "--no-clone",
+        action="store_true",
+        help="use a regular voice even when TTS_VOICE_SAMPLE is set",
     )
     parser.add_argument(
         "--exaggeration",
@@ -262,6 +268,8 @@ def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
         overrides["device"] = args.device
     if args.voice_sample:
         overrides["voice_sample"] = Path(args.voice_sample)
+    elif args.no_clone:
+        overrides["voice_sample"] = None
     if args.exaggeration is not None:
         overrides["exaggeration"] = args.exaggeration
     if args.cfg_weight is not None:
@@ -275,7 +283,8 @@ def _apply_overrides(settings: Settings, args: argparse.Namespace) -> Settings:
             )
     elif args.voice.strip().lower() not in ("default", "clone"):
         raise InvalidOptionError(
-            "--voice cannot be combined with voice cloning: the voice sample is the voice"
+            "--voice cannot be combined with voice cloning: the voice sample is the voice "
+            "(add --no-clone to use a regular voice while TTS_VOICE_SAMPLE is set)"
         )
     return settings
 

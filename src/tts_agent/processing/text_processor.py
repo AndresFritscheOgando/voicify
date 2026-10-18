@@ -7,7 +7,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from tts_agent.errors import EmptyTextError, InvalidOptionError
+from tts_agent.config import MAX_PAUSE_MS
+from tts_agent.errors import ChunkingError, EmptyTextError, InvalidOptionError
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,17 @@ def parse_pause(marker: str) -> int:
         )
         return DEFAULT_PAUSE_MS
     value = float(length.group(1))
-    return round(value if length.group(2).lower() == "ms" else value * 1000)
+    milliseconds = round(value if length.group(2).lower() == "ms" else value * 1000)
+    if milliseconds > MAX_PAUSE_MS:
+        logger.warning(
+            "pause_capped marker=%r ms=%d using_ms=%d (pauses are at most %d s)",
+            marker,
+            milliseconds,
+            MAX_PAUSE_MS,
+            MAX_PAUSE_MS // 1000,
+        )
+        return MAX_PAUSE_MS
+    return milliseconds
 
 
 def strip_pause_markers(text: str) -> str:
@@ -221,7 +232,11 @@ def check_integrity(normalized: str, chunks: list[Chunk]) -> None:
     expected = _WHITESPACE.sub("", normalized)
     actual = _WHITESPACE.sub("", "".join(c.text for c in chunks))
     if actual != expected:
-        raise AssertionError("Chunking integrity check failed: chunk text != normalized input")
+        raise ChunkingError(
+            "Splitting the text into chunks lost, duplicated or reordered some of it, so nothing "
+            "was synthesized. This is a bug in Voicify; please report it with the script that "
+            "caused it."
+        )
 
 
 def _pack(pieces: list[str], max_chars: int) -> list[str]:
