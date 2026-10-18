@@ -176,6 +176,29 @@ def test_synthesize_passes_the_style_options(sample):
     assert model.calls == [("Hello there.", 0.8, 0.3)]
 
 
+def test_seed_repeats_every_random_generator(sample):
+    import random
+
+    import torch
+
+    engine = ChatterboxEngine(sample)
+    assert engine.uses_seed is True
+
+    def draws():
+        return random.random(), float(np.random.random()), torch.rand(3).tolist()
+
+    engine.seed(123)
+    first = draws()
+    engine.seed(123)
+    assert draws() == first
+    engine.seed(124)
+    assert draws() != first
+
+
+def test_seed_accepts_the_largest_seed(sample):
+    ChatterboxEngine(sample).seed(2**32 - 1)  # numpy's limit
+
+
 def test_speed_stretches_the_audio(sample):
     pytest.importorskip("librosa")
     engine = loaded(ChatterboxEngine(sample), FakeModel())

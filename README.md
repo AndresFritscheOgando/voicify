@@ -227,6 +227,7 @@ Generated: 15.0 s (58 chunks, plus 11.9 s loading)
 | `--voice-sample PATH` | Speak in the voice of this clip with Chatterbox (see [Voice cloning](#voice-cloning)) |
 | `--exaggeration FLOAT` | Cloned voice only: 0.25–2.0, how expressive it is (default 0.5) |
 | `--cfg-weight FLOAT` | Cloned voice only: 0–1, lower is slower and more deliberate (default 0.5) |
+| `--seed INT` | Cloned voice only: repeat the takes of an earlier run (default `TTS_SEED`, else random) |
 | `--device auto\|cuda\|cpu` | Overrides `TTS_DEVICE` |
 | `--verbose` / `--quiet` | Debug logging and tracebacks / warnings only |
 
@@ -335,6 +336,20 @@ are used. Use one speaker talking clearly, with no music, laughter or background
 | Pronunciation dictionary | respellings and `/phonemes/` | respellings only (phoneme entries are skipped with a warning) |
 | `--voice` | any voice in section 5 | not used: the sample is the voice |
 
+**Repeating a good take.** Chatterbox samples randomly, so every run sounds a little different.
+Each run prints its seed (`Seed: 2849105733 (pass --seed 2849105733 to repeat these takes)`);
+pass it back to get exactly the same audio again:
+
+```bash
+voicify --file script.txt --voice-sample samples/narrator.wav --seed 2849105733
+```
+
+Each sentence's take comes from the seed and that sentence's text, so after editing one sentence,
+the same seed regenerates the others unchanged and only the edited one differs. Identical seeds
+give identical audio on the same machine with the same library versions (checked on CUDA); another
+GPU or a PyTorch upgrade can change the result. `TTS_SEED` sets a fixed seed for every run.
+`--seed` has no effect on Kokoro voices, which give the same audio every time anyway.
+
 **Bad takes are retried.** Chatterbox samples randomly, so a take sometimes rambles, repeats
 words, or stops early. Each take's length is checked against its text: anything faster than about
 30 characters per second, slower than about 7 (plus 1.5 s), or near the 40 s limit Chatterbox stops
@@ -378,6 +393,7 @@ print(result.output_path, result.duration_seconds, result.subtitle_path)
 | `chunk_count`, `failed_chunks` | How many chunks, and the 0-based indexes of any that were skipped |
 | `resumed_chunks` | Chunks reused from an earlier run's saved parts (`resume=True`) |
 | `suspect_chunks` | Chunks whose every take had an implausible length; the closest take was kept |
+| `seed` | The run's seed for a cloned voice (pass it as `seed=` to repeat the takes); None for Kokoro |
 | `subtitle_path`, `wav_path` | The `.srt` file and the kept WAV, if written |
 | `timeline` | One `ChunkTiming(index, text, start, end, words)` per spoken chunk, with word times in seconds |
 
@@ -481,6 +497,7 @@ The device is chosen by `TTS_DEVICE` (or `--device`):
 | `TTS_VOICE_SAMPLE` | — | Voice clip to clone; when set, Chatterbox replaces Kokoro |
 | `TTS_EXAGGERATION` | `0.5` | Cloned voice expressiveness, 0.25–2.0 |
 | `TTS_CFG_WEIGHT` | `0.5` | Cloned voice pacing, 0–1 |
+| `TTS_SEED` | random | Cloned voice: a fixed seed (0–4294967295) so every run gives the same takes |
 | `HF_HOME` | HF default | Model cache folder |
 | `HF_HUB_OFFLINE` | — | `1` = never download, not even a voice used for the first time |
 
@@ -563,7 +580,7 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 ## Development
 
 ```bash
-uv run pytest                 # mock engine only: 482 tests, offline, about 10 s
+uv run pytest                 # mock engine only: 510 tests, offline, about 10 s
 uv run pytest -m model        # 11 real-model integration tests (Kokoro, plus Chatterbox with the clone extra)
 uv run pytest -m "model or not model" --cov=tts_agent   # everything, with coverage (98%)
 uv run ruff check . && uv run ruff format --check src tests

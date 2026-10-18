@@ -41,13 +41,15 @@ examples:
   voicify --file scripts/example.txt --format mp3 --keep-wav
   voicify --file script.txt --pronunciations pronunciations.txt
   voicify --file script.txt --voice-sample samples/narrator.wav --exaggeration 0.7
+  voicify --file script.txt --voice-sample samples/narrator.wav --seed 1234   # repeat a take
   voicify --file book.txt --output outputs/book.mp3 --resume   # continue a failed run
   voicify --list-voices
 
 voice cloning (needs `uv sync --extra clone`):
   --voice-sample speaks in the voice of a 5+ s clip of clean speech, using Chatterbox instead
   of Kokoro. --exaggeration (0.25-2.0) makes it more expressive; --cfg-weight (0-1) lower
-  makes it slower and more deliberate. Subtitles are timed by character count.
+  makes it slower and more deliberate. Subtitles are timed by character count. Every run
+  prints its seed; pass it back with --seed to get the same takes again.
 
 script controls:
   [pause] (1 s), [pause 1.5s] or [pause 800ms] anywhere in the text inserts an exact silence.
@@ -146,6 +148,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FLOAT",
         help="cloned voice pacing, 0-1; lower is slower (default: TTS_CFG_WEIGHT, 0.5)",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        metavar="INT",
+        help="cloned voice: repeat the takes of an earlier run, 0 to 4294967295 "
+        "(default: TTS_SEED, else random)",
+    )
     parser.add_argument("--device", choices=DEVICES, help="override TTS_DEVICE")
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument(
@@ -194,6 +203,7 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
             keep_wav=args.keep_wav,
             pronunciations=args.pronunciations,
             resume=args.resume,
+            seed=args.seed,
         )
     except KeyboardInterrupt:
         print("error: interrupted", file=sys.stderr)
@@ -212,6 +222,14 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
     print(f"Duration:  {_format_duration(result.duration_seconds)}")
     sample = getattr(agent.engine, "voice_sample", None)
     print(f"Voice:     {f'cloned from {sample.name}' if sample else result.voice}")
+    if result.seed is not None:
+        print(f"Seed:      {result.seed} (pass --seed {result.seed} to repeat these takes)")
+    elif args.seed is not None:
+        print(
+            "note: --seed has no effect here: this voice gives the same take every time "
+            "(seeds apply to cloned voices)",
+            file=sys.stderr,
+        )
     chunks = f"{result.chunk_count} chunk{'s' if result.chunk_count != 1 else ''}"
     load = f", plus {result.load_seconds:.1f} s loading" if result.load_seconds >= 0.1 else ""
     print(f"Generated: {result.generation_seconds:.1f} s ({chunks}{load})")

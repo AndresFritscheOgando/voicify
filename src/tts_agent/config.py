@@ -22,6 +22,7 @@ MIN_EXAGGERATION = 0.25
 MAX_EXAGGERATION = 2.0
 DEFAULT_EXAGGERATION = 0.5
 DEFAULT_CFG_WEIGHT = 0.5
+MAX_SEED = 2**32 - 1
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -47,6 +48,7 @@ class Settings:
     voice_sample: Path | None = None
     exaggeration: float = DEFAULT_EXAGGERATION
     cfg_weight: float = DEFAULT_CFG_WEIGHT
+    seed: int | None = None
 
     def __post_init__(self) -> None:
         if self.device not in DEVICES:
@@ -65,6 +67,8 @@ class Settings:
         validate_speed(self.default_speed, name="TTS_DEFAULT_SPEED")
         validate_exaggeration(self.exaggeration, name="TTS_EXAGGERATION")
         validate_cfg_weight(self.cfg_weight, name="TTS_CFG_WEIGHT")
+        if self.seed is not None:
+            validate_seed(self.seed, name="TTS_SEED")
         if self.max_chunk_chars < MIN_CHUNK_CHARS:
             raise InvalidOptionError(
                 f"TTS_MAX_CHUNK_CHARS must be at least {MIN_CHUNK_CHARS}, "
@@ -121,6 +125,8 @@ class Settings:
             kwargs["exaggeration"] = _parse_float("TTS_EXAGGERATION", v)
         if (v := get("TTS_CFG_WEIGHT")) is not None:
             kwargs["cfg_weight"] = _parse_float("TTS_CFG_WEIGHT", v)
+        if (v := get("TTS_SEED")) is not None:
+            kwargs["seed"] = _parse_int("TTS_SEED", v)
         return cls(**kwargs)  # type: ignore[arg-type]
 
 
@@ -141,6 +147,15 @@ def validate_exaggeration(value: object, name: str = "exaggeration") -> float:
 def validate_cfg_weight(value: object, name: str = "cfg_weight") -> float:
     """Return `value` as a float, or raise `InvalidOptionError` if it is outside 0-1."""
     return _validate_range(value, name, 0.0, 1.0)
+
+
+def validate_seed(value: object, name: str = "seed") -> int:
+    """Return `value` as an int, or raise `InvalidOptionError` unless it is 0 to 2**32 - 1."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidOptionError(f"{name} must be a whole number, got {value!r}")
+    if not 0 <= value <= MAX_SEED:
+        raise InvalidOptionError(f"{name} must be between 0 and {MAX_SEED}, got {value}")
+    return value
 
 
 def _validate_range(value: object, name: str, low: float, high: float) -> float:

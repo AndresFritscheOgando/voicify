@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import difflib
+import hashlib
 import logging
+import secrets
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -15,7 +17,9 @@ import numpy as np
 from tts_agent.config import (
     CHUNK_ERROR_POLICIES,
     DEFAULT_VOICE_ALIAS,
+    MAX_SEED,
     Settings,
+    validate_seed,
     validate_speed,
 )
 from tts_agent.engines.base import TTSEngine, VoiceInfo, WordTiming
@@ -82,6 +86,13 @@ class GenerationResult:
     resumed_chunks: int = 0  # chunks reused from an earlier run's saved parts (resume=True)
     # Chunks whose every take was implausibly short or long for their text; the closest was kept.
     suspect_chunks: list[int] = field(default_factory=list)
+    seed: int | None = None  # the run's seed, for engines whose takes vary (a cloned voice)
+
+
+def take_seed(run_seed: int, text: str, attempt: int) -> int:
+    """The seed for one take: the same run seed, text and attempt always give the same take."""
+    digest = hashlib.sha256(f"{run_seed}:{attempt}:{text}".encode()).digest()
+    return int.from_bytes(digest[:4], "big")  # 0 to 2**32 - 1, which every RNG accepts
 
 
 @dataclass(frozen=True)
@@ -141,6 +152,7 @@ class TTSAgent:
         keep_wav: bool = False,
         pronunciations: str | Path | None = None,
         resume: bool = False,
+        seed: int | None = None,
     ) -> GenerationResult:
         """Synthesize `text` (or the UTF-8 `.txt` script at `file`) and write an audio file.
 
@@ -169,6 +181,11 @@ class TTSAgent:
         stopping early) counts as a failed attempt; if every attempt is like that, the closest
         take is kept and the chunk is listed in `suspect_chunks`.
 
+        `seed` (default `TTS_SEED`) makes the takes of an engine with random sampling (a cloned
+        voice) repeatable; without one a random seed is picked. Either way it is returned in
+        `seed`, so a good take can be made again. Each take is seeded from the run's seed, the
+        chunk's text and the attempt number: editing one sentence leaves the others' takes alone.
+
         Every finished chunk is saved in `.<output name>.parts/` next to the output while the job
         runs. The folder is deleted once the audio is written with no failed chunks; otherwise it
         stays (and `kept_parts` points at it), and `resume=True` on the next run with the same
@@ -178,6 +195,7 @@ class TTSAgent:
         text = self._read_input(text, file)
         voice = self.resolve_voice(voice)
         speed = validate_speed(self.settings.default_speed if speed is None else speed)
+        run_seed = self._run_seed(seed)
         policy = (on_chunk_error or self.settings.on_chunk_error).strip().lower()
         if policy not in CHUNK_ERROR_POLICIES:
             raise InvalidOptionError(
@@ -194,12 +212,13 @@ class TTSAgent:
         self.kept_parts = None
 
         logger.info(
-            "generate_start engine=%s voice=%s speed=%s chars=%d chunks=%d",
+            "generate_start engine=%s voice=%s speed=%s chars=%d chunks=%d seed=%s",
             self.engine.name,
             voice,
             speed,
             len(text),
             len(chunks),
+            run_seed,
         )
         loading = time.perf_counter()
         self.engine.prepare(voice)  # one-time model load, kept out of generation_seconds
@@ -209,7 +228,7 @@ class TTSAgent:
         try:
             started = time.perf_counter()
             audio, timeline, failed, resumed = self._synthesize_chunks(
-                chunks, voice, speed, policy, rules, parts, resume, suspect
+                chunks, voice, speed, policy, rules, parts, resume, suspect, run_seed
             )
             generation_seconds = time.perf_counter() - started
 
@@ -254,7 +273,21 @@ class TTSAgent:
             wav_path=wav_path,
             resumed_chunks=resumed,
             suspect_chunks=suspect,
+            seed=run_seed,
         )
+
+    def _run_seed(self, seed: int | None) -> int | None:
+        """The seed for this run: given, from settings, or random; None if the engine does not
+        sample randomly."""
+        if not self.engine.uses_seed:
+            if seed is not None:
+                validate_seed(seed)
+            return None
+        if seed is None:
+            seed = self.settings.seed
+        if seed is None:
+            return secrets.randbelow(MAX_SEED + 1)
+        return validate_seed(seed)
 
     def _keep_parts(self, parts: PartCache, total: int) -> None:
         saved = parts.count()
@@ -327,6 +360,7 @@ class TTSAgent:
         parts: PartCache,
         resume: bool,
         suspect: list[int],
+        run_seed: int | None = None,
     ) -> tuple[np.ndarray, list[ChunkTiming], list[int], int]:
         """Synthesize every chunk in order and join them with pauses.
 
@@ -358,7 +392,9 @@ class TTSAgent:
             if synthesized is not None:
                 resumed += 1
             else:
-                synthesized = self._synthesize_with_retries(chunk, spoken.text, voice, speed, total)
+                synthesized = self._synthesize_with_retries(
+                    chunk, spoken.text, voice, speed, total, run_seed
+                )
                 if synthesized is not None and synthesized.plausible:
                     parts.save(spoken.text, voice, speed, synthesized.audio, synthesized.words)
                 elif synthesized is not None:
@@ -439,7 +475,13 @@ class TTSAgent:
         return tail
 
     def _synthesize_with_retries(
-        self, chunk: Chunk, text: str, voice: str, speed: float, total: int
+        self,
+        chunk: Chunk,
+        text: str,
+        voice: str,
+        speed: float,
+        total: int,
+        run_seed: int | None = None,
     ) -> _Take | None:
         """Synthesize one chunk, retrying failures and implausibly long or short takes.
 
@@ -450,6 +492,8 @@ class TTSAgent:
         closest: tuple[float, _Take] | None = None  # (how far outside the range, take)
         for attempt in range(1, attempts + 1):
             try:
+                if run_seed is not None:
+                    self.engine.seed(take_seed(run_seed, text, attempt))
                 audio, words = self.engine.synthesize_timed(text, voice, speed)
                 if audio is None or len(audio) == 0:
                     raise SynthesisError("the engine returned no audio")

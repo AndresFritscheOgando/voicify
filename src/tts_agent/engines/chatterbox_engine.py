@@ -120,6 +120,21 @@ class ChatterboxEngine(TTSEngine):
     def max_chunk_chars(self) -> int:
         return MAX_CHUNK_CHARS
 
+    @property
+    def uses_seed(self) -> bool:
+        return True
+
+    def seed(self, value: int) -> None:
+        """Seed every generator Chatterbox samples from (torch seeds CUDA too). The same seed
+        repeats a take on the same machine and library versions; GPUs and versions differ."""
+        import random
+
+        import torch
+
+        random.seed(value)
+        np.random.seed(value)
+        torch.manual_seed(value)
+
     def plausible_seconds(self, text: str, speed: float = 1.0) -> tuple[float, float]:
         """From the fastest to the slowest believable speaking rate, after the speed stretch."""
         chars = len(text.strip())

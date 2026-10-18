@@ -85,5 +85,13 @@ class TTSEngine(ABC):
         chunks are only reused with the same engine settings. Defaults to `name`."""
         return self.name
 
+    @property
+    def uses_seed(self) -> bool:
+        """Whether takes vary from run to run (random sampling); if so, `seed` repeats them."""
+        return False
+
+    def seed(self, value: int) -> None:  # noqa: B027 - optional hook, a no-op by default
+        """Seed the random sampling before a take. Deterministic engines ignore it."""
+
     def prepare(self, voice: str) -> None:  # noqa: B027 - optional hook, a no-op by default
         """Load whatever `voice` needs before the first `synthesize` call. Optional."""
