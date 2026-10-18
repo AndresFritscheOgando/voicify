@@ -80,6 +80,17 @@ class GenerationResult:
     load_seconds: float = 0.0  # engine/model loading before synthesis; 0 once loaded
     wav_path: Path | None = None  # the WAV kept next to an MP3 (keep_wav=True)
     resumed_chunks: int = 0  # chunks reused from an earlier run's saved parts (resume=True)
+    # Chunks whose every take was implausibly short or long for their text; the closest was kept.
+    suspect_chunks: list[int] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _Take:
+    """One synthesized chunk: its audio, word timings, and whether its length was believable."""
+
+    audio: np.ndarray
+    words: list[WordTiming]
+    plausible: bool = True
 
 
 class TTSAgent:
@@ -153,7 +164,10 @@ class TTSAgent:
 
         A chunk that still fails after `TTS_CHUNK_RETRIES` retries is skipped and listed in
         `failed_chunks` (`on_chunk_error="skip"`), or stops the run (`"abort"`). If every chunk
-        fails, `SynthesisError` is raised and no file is written.
+        fails, `SynthesisError` is raised and no file is written. A take whose length is outside
+        the engine's `plausible_seconds` for its text (a cloned voice rambling, repeating words or
+        stopping early) counts as a failed attempt; if every attempt is like that, the closest
+        take is kept and the chunk is listed in `suspect_chunks`.
 
         Every finished chunk is saved in `.<output name>.parts/` next to the output while the job
         runs. The folder is deleted once the audio is written with no failed chunks; otherwise it
@@ -191,10 +205,11 @@ class TTSAgent:
         self.engine.prepare(voice)  # one-time model load, kept out of generation_seconds
         load_seconds = time.perf_counter() - loading
 
+        suspect: list[int] = []
         try:
             started = time.perf_counter()
             audio, timeline, failed, resumed = self._synthesize_chunks(
-                chunks, voice, speed, policy, rules, parts, resume
+                chunks, voice, speed, policy, rules, parts, resume, suspect
             )
             generation_seconds = time.perf_counter() - started
 
@@ -238,6 +253,7 @@ class TTSAgent:
             load_seconds=load_seconds,
             wav_path=wav_path,
             resumed_chunks=resumed,
+            suspect_chunks=suspect,
         )
 
     def _keep_parts(self, parts: PartCache, total: int) -> None:
@@ -310,6 +326,7 @@ class TTSAgent:
         rules: Sequence[Rule],
         parts: PartCache,
         resume: bool,
+        suspect: list[int],
     ) -> tuple[np.ndarray, list[ChunkTiming], list[int], int]:
         """Synthesize every chunk in order and join them with pauses.
 
@@ -318,7 +335,9 @@ class TTSAgent:
         trailing silence next to the marker is trimmed, so the audible gap is the requested one.
         Segments are collected in a list and concatenated once at the end. Each synthesized chunk
         is saved to `parts`; with `resume`, saved chunks are used instead of synthesizing them.
-        Returns the audio, the timeline, the failed chunk indices and how many were resumed.
+        Returns the audio, the timeline, the failed chunk indices and how many were resumed;
+        chunks kept despite an implausible length are appended to `suspect` (and not saved, so a
+        resumed run tries them again).
         """
         rate = self.engine.sample_rate
         segments: list[np.ndarray] = []
@@ -334,13 +353,16 @@ class TTSAgent:
             spoken = to_spoken(chunk.text, rules)
             if spoken.edits:
                 logger.debug("spoken_text chunk=%d text=%r", chunk.index + 1, spoken.text)
-            synthesized = parts.load(spoken.text, voice, speed) if resume else None
+            cached = parts.load(spoken.text, voice, speed) if resume else None
+            synthesized = _Take(*cached) if cached is not None else None
             if synthesized is not None:
                 resumed += 1
             else:
                 synthesized = self._synthesize_with_retries(chunk, spoken.text, voice, speed, total)
-                if synthesized is not None:
-                    parts.save(spoken.text, voice, speed, *synthesized)
+                if synthesized is not None and synthesized.plausible:
+                    parts.save(spoken.text, voice, speed, synthesized.audio, synthesized.words)
+                elif synthesized is not None:
+                    suspect.append(chunk.index)
             if synthesized is None:
                 failed.append(chunk.index)
                 if policy == "abort":
@@ -348,7 +370,7 @@ class TTSAgent:
                         f"Chunk {chunk.index + 1}/{total} failed; aborting (on_chunk_error=abort)"
                     )
             else:
-                audio, words = synthesized
+                audio, words = synthesized.audio, synthesized.words
                 head = 0
                 if marker_ms is not None:
                     head = leading_silence(audio, rate)
@@ -418,14 +440,43 @@ class TTSAgent:
 
     def _synthesize_with_retries(
         self, chunk: Chunk, text: str, voice: str, speed: float, total: int
-    ) -> tuple[np.ndarray, list[WordTiming]] | None:
+    ) -> _Take | None:
+        """Synthesize one chunk, retrying failures and implausibly long or short takes.
+
+        Returns None if every attempt raised. If every take that came back had an implausible
+        length, the one closest to the plausible range is returned with `plausible=False`.
+        """
         attempts = 1 + self.settings.chunk_retries
+        closest: tuple[float, _Take] | None = None  # (how far outside the range, take)
         for attempt in range(1, attempts + 1):
             try:
                 audio, words = self.engine.synthesize_timed(text, voice, speed)
                 if audio is None or len(audio) == 0:
                     raise SynthesisError("the engine returned no audio")
-                return np.asarray(audio, dtype=np.float32).reshape(-1), list(words)
+                take = _Take(np.asarray(audio, dtype=np.float32).reshape(-1), list(words))
+                bounds = self.engine.plausible_seconds(text, speed)
+                if bounds is None:
+                    return take
+                seconds = len(take.audio) / self.engine.sample_rate
+                low, high = bounds
+                if low <= seconds <= high:
+                    return take
+                # Ratio to the nearest bound: 1.0 is just outside, 2.0 twice too long or short.
+                distance = low / seconds if seconds < low else seconds / high
+                if closest is None or distance < closest[0]:
+                    closest = (distance, dataclasses.replace(take, plausible=False))
+                logger.warning(
+                    "chunk_implausible_length chunk=%d/%d attempt=%d/%d seconds=%.1f "
+                    "expected=%.1f-%.1f text=%r",
+                    chunk.index + 1,
+                    total,
+                    attempt,
+                    attempts,
+                    seconds,
+                    low,
+                    high,
+                    chunk.text[:60],
+                )
             except ModelLoadError:
                 raise
             except Exception as exc:  # any engine failure is retried, then skipped or aborted
@@ -438,6 +489,14 @@ class TTSAgent:
                     str(exc),
                     chunk.text[:60],
                 )
+        if closest is not None:
+            logger.warning(
+                "chunk_length_kept chunk=%d/%d (every take had an implausible length; keeping "
+                "the closest, listen to it)",
+                chunk.index + 1,
+                total,
+            )
+            return closest[1]
         return None
 
     def _target_path(self, output_path: str | Path | None, format: str | None) -> tuple[Path, str]:

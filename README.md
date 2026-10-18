@@ -335,6 +335,14 @@ are used. Use one speaker talking clearly, with no music, laughter or background
 | Pronunciation dictionary | respellings and `/phonemes/` | respellings only (phoneme entries are skipped with a warning) |
 | `--voice` | any voice in section 5 | not used: the sample is the voice |
 
+**Bad takes are retried.** Chatterbox samples randomly, so a take sometimes rambles, repeats
+words, or stops early. Each take's length is checked against its text: anything faster than about
+30 characters per second, slower than about 7 (plus 1.5 s), or near the 40 s limit Chatterbox stops
+at counts as a failed attempt and is generated again (`TTS_CHUNK_RETRIES`, default 1 retry). If
+every attempt is off, the closest take is kept rather than dropping the sentence, and the CLI warns
+with the chunk numbers so you can listen to them. Raise `TTS_CHUNK_RETRIES` for more tries. A
+length check cannot catch a take that is the right length but says the wrong words.
+
 Every Chatterbox output carries Resemble AI's **Perth watermark**: an inaudible mark that identifies
 the audio as AI-generated, and is detectable even after MP3 compression.
 
@@ -369,6 +377,7 @@ print(result.output_path, result.duration_seconds, result.subtitle_path)
 | `generation_seconds`, `load_seconds` | Synthesis time, and the one-time model load before it |
 | `chunk_count`, `failed_chunks` | How many chunks, and the 0-based indexes of any that were skipped |
 | `resumed_chunks` | Chunks reused from an earlier run's saved parts (`resume=True`) |
+| `suspect_chunks` | Chunks whose every take had an implausible length; the closest take was kept |
 | `subtitle_path`, `wav_path` | The `.srt` file and the kept WAV, if written |
 | `timeline` | One `ChunkTiming(index, text, start, end, words)` per spoken chunk, with word times in seconds |
 
@@ -519,7 +528,8 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 - **It sounds unlike the sample:** use a cleaner clip. Music, laughter, a second speaker or echo in
   the first 10 seconds ends up in the voice.
 - **Odd words, mumbling or repeated phrases** come from Chatterbox's sampling, which varies from run
-  to run. Regenerate, lower `--exaggeration`, or split very long sentences.
+  to run. Takes of the wrong length are retried automatically; for the rest, regenerate, lower
+  `--exaggeration`, or split very long sentences.
 - **It needs about 4 GB of VRAM.** On smaller GPUs, use `--device cpu`, which is several times
   slower.
 
@@ -553,7 +563,7 @@ moved the cache, make sure `HF_HOME` is the same for both runs.
 ## Development
 
 ```bash
-uv run pytest                 # mock engine only: 465 tests, offline, about 10 s
+uv run pytest                 # mock engine only: 482 tests, offline, about 10 s
 uv run pytest -m model        # 11 real-model integration tests (Kokoro, plus Chatterbox with the clone extra)
 uv run pytest -m "model or not model" --cov=tts_agent   # everything, with coverage (98%)
 uv run ruff check . && uv run ruff format --check src tests

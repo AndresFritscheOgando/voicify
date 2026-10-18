@@ -13,6 +13,7 @@ from tts_agent.agent import TTSAgent
 from tts_agent.engines.chatterbox_engine import (
     CLONE_VOICE_ID,
     MAX_CHUNK_CHARS,
+    MAX_TAKE_SECONDS,
     ChatterboxEngine,
 )
 from tts_agent.engines.mock_engine import MockEngine
@@ -37,11 +38,13 @@ def sample(tmp_path):
 
 
 class FakeModel:
-    """Stands in for `ChatterboxTTS`: one second of tone per call, recording its arguments."""
+    """Stands in for `ChatterboxTTS`: one second of tone per call (or `chars_per_second` of
+    speech), recording its arguments."""
 
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, chars_per_second: float | None = None) -> None:
         self.calls: list[tuple[str, float, float]] = []
         self.fail = fail
+        self.chars_per_second = chars_per_second
 
     def generate(self, text, exaggeration, cfg_weight):
         import torch
@@ -49,7 +52,8 @@ class FakeModel:
         self.calls.append((text, exaggeration, cfg_weight))
         if self.fail:
             raise RuntimeError("out of memory")
-        t = torch.arange(24_000, dtype=torch.float32) / 24_000
+        seconds = len(text) / self.chars_per_second if self.chars_per_second else 1.0
+        t = torch.arange(round(seconds * 24_000), dtype=torch.float32) / 24_000
         return (0.3 * torch.sin(2 * torch.pi * 220 * t)).unsqueeze(0)
 
 
@@ -190,8 +194,55 @@ def test_model_failure_is_a_synthesis_error(sample):
         engine.synthesize("Hello.", CLONE_VOICE_ID)
 
 
+def test_plausible_length_spans_fast_to_slow_speech(sample):
+    engine = ChatterboxEngine(sample)
+    text = "x" * 150
+
+    low, high = engine.plausible_seconds(text)
+
+    assert low == pytest.approx(150 / 30)  # 30 characters per second
+    assert high == pytest.approx(150 / 7 + 1.5)  # 7 characters per second, plus slack
+    assert low < 150 / 15 < high  # ordinary narration, about 15 per second, fits
+
+
+def test_plausible_length_stops_short_of_the_token_cap(sample):
+    _, high = ChatterboxEngine(sample).plausible_seconds("x" * MAX_CHUNK_CHARS)
+
+    assert high == MAX_TAKE_SECONDS < 40.0
+
+
+def test_plausible_length_follows_the_speed_stretch(sample):
+    engine = ChatterboxEngine(sample)
+
+    normal = engine.plausible_seconds("x" * 100)
+    fast = engine.plausible_seconds("x" * 100, speed=2.0)
+
+    assert fast == pytest.approx((normal[0] / 2, normal[1] / 2))
+
+
+def test_plausible_length_fits_a_real_take(sample):
+    # A real Peter Griffin clip: 66 characters in 4.84 s at exaggeration 0.8, cfg_weight 0.3.
+    text = "Holy crap, Lois! It's the \"chicken\" again... and he's got my beer!"
+    low, high = ChatterboxEngine(sample).plausible_seconds(text)
+
+    assert len(text) == 66
+    assert low < 4.84 < high
+
+
+def test_agent_retries_a_rambling_cloned_take(sample, settings, tmp_path):
+    model = FakeModel(chars_per_second=2)  # far slower than any real delivery
+    engine = loaded(ChatterboxEngine(sample), model)
+
+    result = TTSAgent(engine=engine, settings=settings).generate(
+        "A short line to speak.", output_path=tmp_path / "clone.wav"
+    )
+
+    assert len(model.calls) == 2  # the first take and one retry
+    assert result.suspect_chunks == [0]
+
+
 def test_agent_generates_with_the_cloned_voice(sample, settings, tmp_path):
-    model = FakeModel()
+    model = FakeModel(chars_per_second=15)
     engine = loaded(ChatterboxEngine(sample), model)
     text = "First sentence here. " * 30  # longer than one Chatterbox chunk
 

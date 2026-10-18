@@ -47,6 +47,14 @@ MIN_SAMPLE_SECONDS = 5.0
 USED_SAMPLE_SECONDS = 10.0  # Chatterbox conditions on the first 10 s of the sample
 # Chatterbox stops after 1000 speech tokens (40 s) and drifts on long inputs, so chunks stay short.
 MAX_CHUNK_CHARS = 300
+# Believable take lengths, for catching a sampling run that rambles, repeats words, or stops
+# early. Narration is about 15 characters per second; a slow, deliberate delivery (low
+# cfg_weight) stays above 7 and a fast one below 30. The slack covers lead-in silence on short
+# chunks. A take near the 40 s token cap means generation ran away, whatever the text length.
+MIN_CHARS_PER_SECOND = 7.0
+MAX_CHARS_PER_SECOND = 30.0
+LENGTH_SLACK_SECONDS = 1.5
+MAX_TAKE_SECONDS = 39.0
 
 _INSTALL_HINT = (
     "Voice cloning needs the optional Chatterbox dependencies: run `uv sync --extra clone`"
@@ -111,6 +119,13 @@ class ChatterboxEngine(TTSEngine):
     @property
     def max_chunk_chars(self) -> int:
         return MAX_CHUNK_CHARS
+
+    def plausible_seconds(self, text: str, speed: float = 1.0) -> tuple[float, float]:
+        """From the fastest to the slowest believable speaking rate, after the speed stretch."""
+        chars = len(text.strip())
+        low = chars / MAX_CHARS_PER_SECOND
+        high = min(chars / MIN_CHARS_PER_SECOND + LENGTH_SLACK_SECONDS, MAX_TAKE_SECONDS)
+        return low / speed, high / speed
 
     @property
     def cache_key(self) -> str:

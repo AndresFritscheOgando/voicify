@@ -217,6 +217,14 @@ def main(argv: list[str] | None = None, *, engine: TTSEngine | None = None) -> i
     print(f"Generated: {result.generation_seconds:.1f} s ({chunks}{load})")
     if result.resumed_chunks:
         print(f"Resumed:   {result.resumed_chunks} of {result.chunk_count} chunks from saved parts")
+    if result.suspect_chunks:
+        numbers = ", ".join(str(i + 1) for i in result.suspect_chunks)
+        print(
+            f"warning: chunk{'s' if len(result.suspect_chunks) != 1 else ''} {numbers} came out "
+            "much shorter or longer than the text should take, even after retrying; listen to "
+            "them and run again if they ramble or cut off (more tries: TTS_CHUNK_RETRIES)",
+            file=sys.stderr,
+        )
     if result.failed_chunks:
         numbers = ", ".join(str(i + 1) for i in result.failed_chunks)
         print(

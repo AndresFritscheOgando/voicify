@@ -74,6 +74,11 @@ class TTSEngine(ABC):
         """The longest chunk the engine handles well, or None for no limit beyond the settings."""
         return None
 
+    def plausible_seconds(self, text: str, speed: float = 1.0) -> tuple[float, float] | None:
+        """The range of audio lengths that is believable for `text` at `speed`, or None to accept
+        any length. A take outside it counts as a failed attempt and is synthesized again."""
+        return None
+
     @property
     def cache_key(self) -> str:
         """Identifies everything besides voice, speed and text that shapes the audio, so saved
